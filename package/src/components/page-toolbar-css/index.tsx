@@ -8,7 +8,6 @@ import {
   AnnotationPopupCSSHandle,
 } from "../annotation-popup-css";
 import {
-  IconListSparkle,
   IconGear,
   IconCopyAnimated,
   IconSendArrow,
@@ -313,6 +312,16 @@ export type PageFeedbackToolbarCSSProps = {
   webhookUrl?: string;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
+  /** Whether feedback mode starts expanded. Defaults to true. */
+  defaultOpen?: boolean;
+  /** Whether to show the layout mode control (and related L hotkey). Defaults to false. */
+  showLayoutControl?: boolean;
+  /** Whether to show the marker visibility control (and related H hotkey). Defaults to false. */
+  showMarkerVisibilityControl?: boolean;
+  /** Whether to show the settings control and panel access. Defaults to false. */
+  showSettingsControl?: boolean;
+  /** Whether the L keyboard shortcut can toggle layout mode. Defaults to false. */
+  enableLayoutModeHotkey?: boolean;
 };
 
 /** Alias for PageFeedbackToolbarCSSProps */
@@ -338,8 +347,15 @@ export function PageFeedbackToolbarCSS({
   onSessionCreated,
   webhookUrl,
   className: userClassName,
+  defaultOpen = true,
+  showLayoutControl = false,
+  showMarkerVisibilityControl = false,
+  showSettingsControl = false,
+  enableLayoutModeHotkey = false,
 }: PageFeedbackToolbarCSSProps = {}) {
-  const [isActive, setIsActive] = useState(false);
+  const COLLAPSED_TOOLBAR_WIDTH = 156;
+  const [isActive, setIsActive] = useState(defaultOpen);
+  const isCompactToolbar = !showLayoutControl && !showMarkerVisibilityControl && !showSettingsControl;
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [showMarkers, setShowMarkers] = useState(true);
   const [isToolbarHidden, setIsToolbarHidden] = useState(() => loadToolbarHidden());
@@ -685,7 +701,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
     setAnnotations(stored.filter(isRenderableAnnotation));
 
     // Trigger entrance animation only on first load (not on SPA navigation)
-    if (!hasPlayedEntranceAnimation) {
+    if (!defaultOpen && !hasPlayedEntranceAnimation) {
       setShowEntranceAnimation(true);
       hasPlayedEntranceAnimation = true;
       // Remove animation class after it completes (toolbar: 500ms, badge: 400ms delay + 300ms)
@@ -3106,19 +3122,38 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       }
     }
 
+    let copySucceeded = !copyToClipboard;
     if (copyToClipboard) {
       try {
         await navigator.clipboard.writeText(output);
+        copySucceeded = true;
       } catch {
-        // Clipboard may fail (permissions, not HTTPS, etc.) - continue anyway
+        // WARNING: Clipboard APIs can be blocked in iframe contexts without delegated permission; fallback to execCommand for broader compatibility.
+        const textarea = document.createElement("textarea");
+        textarea.value = output;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          copySucceeded = document.execCommand("copy");
+        } catch {
+          copySucceeded = false;
+        } finally {
+          document.body.removeChild(textarea);
+        }
       }
     }
 
     // Fire callback with markdown output (always, regardless of clipboard success)
     onCopy?.(output);
 
-    setCopied(true);
-    originalSetTimeout(() => setCopied(false), 2000);
+    if (copySucceeded) {
+      setCopied(true);
+      originalSetTimeout(() => setCopied(false), 2000);
+    }
 
     if (settings.autoClearAfterCopy) {
       originalSetTimeout(() => clearAll(), 500);
@@ -3236,16 +3271,16 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
 
         // Constrain to viewport
         const padding = 20;
-        const wrapperWidth = 337; // .toolbar wrapper width
+        const wrapperWidth = isCompactToolbar ? 257 : 337; // .toolbar wrapper width
         const toolbarHeight = 44;
 
         // Content is right-aligned within wrapper via margin-left: auto
         // Calculate content width based on state
         const contentWidth = isActive
           ? connectionStatus === "connected"
-            ? 297
-            : 257
-          : 44; // collapsed circle
+            ? isCompactToolbar ? 217 : 297
+            : isCompactToolbar ? 177 : 257
+          : COLLAPSED_TOOLBAR_WIDTH;
 
         // Content offset from wrapper left edge
         const contentOffset = wrapperWidth - contentWidth;
@@ -3281,7 +3316,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [dragStartPos, isDraggingToolbar, isActive, connectionStatus]);
+  }, [dragStartPos, isDraggingToolbar, isActive, connectionStatus, isCompactToolbar]);
 
   // Handle toolbar drag start
   const handleToolbarMouseDown = useCallback(
@@ -3321,7 +3356,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
 
     const constrainPosition = () => {
       const padding = 20;
-      const wrapperWidth = 337; // .toolbar wrapper width
+      const wrapperWidth = isCompactToolbar ? 257 : 337; // .toolbar wrapper width
       const toolbarHeight = 44;
 
       let newX = toolbarPosition.x;
@@ -3331,9 +3366,9 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       // Calculate content width based on state
       const contentWidth = isActive
         ? connectionStatus === "connected"
-          ? 297
-          : 257
-        : 44; // collapsed circle
+          ? isCompactToolbar ? 217 : 297
+          : isCompactToolbar ? 177 : 257
+        : COLLAPSED_TOOLBAR_WIDTH;
 
       // Content offset from wrapper left edge
       const contentOffset = wrapperWidth - contentWidth;
@@ -3360,7 +3395,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
 
     window.addEventListener("resize", constrainPosition);
     return () => window.removeEventListener("resize", constrainPosition);
-  }, [toolbarPosition, isActive, connectionStatus]);
+  }, [toolbarPosition, isActive, connectionStatus, isCompactToolbar]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -3423,7 +3458,11 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       }
 
       // "L" to toggle layout mode
-      if (e.key === "l" || e.key === "L") {
+      if (
+        showLayoutControl &&
+        enableLayoutModeHotkey &&
+        (e.key === "l" || e.key === "L")
+      ) {
         e.preventDefault();
         hideTooltipsUntilMouseLeave();
         if (isDrawMode) setIsDrawMode(false);
@@ -3437,7 +3476,10 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       }
 
       // "H" to toggle marker visibility
-      if (e.key === "h" || e.key === "H") {
+      if (
+        showMarkerVisibilityControl &&
+        (e.key === "h" || e.key === "H")
+      ) {
         if (annotations.length > 0) {
           e.preventDefault();
           hideTooltipsUntilMouseLeave();
@@ -3500,6 +3542,9 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
     copyOutput,
     clearAll,
     pendingMultiSelectElements,
+    showLayoutControl,
+    showMarkerVisibilityControl,
+    enableLayoutModeHotkey,
   ]);
 
   if (!mounted) return null;
@@ -3566,7 +3611,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
     <div ref={portalWrapperRef} style={{ display: "contents" }} data-agentation-theme={isDarkMode ? "dark" : "light"} data-agentation-accent={settings.annotationColorId} data-agentation-root="">
       {/* Toolbar */}
       <div
-        className={`${styles.toolbar}${userClassName ? ` ${userClassName}` : ""}`}
+        className={`${styles.toolbar} ${isCompactToolbar ? styles.compact : ""}${userClassName ? ` ${userClassName}` : ""}`}
         data-feedback-toolbar
         data-agentation-toolbar
         style={
@@ -3582,7 +3627,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       >
         {/* Morphing container */}
         <div
-          className={`${styles.toolbarContainer} ${isActive ? styles.expanded : styles.collapsed} ${showEntranceAnimation ? styles.entrance : ""} ${isToolbarHiding ? styles.hiding : ""} ${!settings.webhooksEnabled && (isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "")) ? styles.serverConnected : ""}`}
+          className={`${styles.toolbarContainer} ${isCompactToolbar ? styles.compact : ""} ${isActive ? styles.expanded : styles.collapsed} ${showEntranceAnimation ? styles.entrance : ""} ${isToolbarHiding ? styles.hiding : ""} ${!settings.webhooksEnabled && (isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "")) ? styles.serverConnected : ""}`}
           onClick={
             !isActive
               ? (e) => {
@@ -3605,7 +3650,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
           <div
             className={`${styles.toggleContent} ${!isActive ? styles.visible : styles.hidden}`}
           >
-            <IconListSparkle size={24} />
+            <span className={styles.toggleLabel}>Feedback mode</span>
             {hasVisibleAnnotations && (
               <span
                 className={`${styles.badge} ${isActive ? styles.fadeOut : ""} ${showEntranceAnimation ? styles.entrance : ""}`}
@@ -3670,6 +3715,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
             </div>
             */}
 
+            {showLayoutControl && (
             <div className={styles.buttonWrapper}>
               <button
                 className={`${styles.controlButton} ${!isDarkMode ? styles.light : ""}`}
@@ -3695,7 +3741,9 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
                 <span className={styles.shortcut}>L</span>
               </span>
             </div>
+            )}
 
+            {showMarkerVisibilityControl && (
             <div className={styles.buttonWrapper}>
               <button
                 className={styles.controlButton}
@@ -3713,6 +3761,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
                 <span className={styles.shortcut}>H</span>
               </span>
             </div>
+            )}
 
             <div className={styles.buttonWrapper}>
               <button
@@ -3793,7 +3842,8 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
                 <span className={styles.shortcut}>X</span>
               </span>
             </div>
-
+            
+            {showSettingsControl && (
             <div className={styles.buttonWrapper}>
               <button
                 className={styles.controlButton}
@@ -3818,10 +3868,13 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
               )}
               <span className={styles.buttonTooltip}>Settings</span>
             </div>
+            )}
 
+            {showSettingsControl && (
             <div
               className={styles.divider}
             />
+            )}
 
             <div
               className={`${styles.buttonWrapper} ${

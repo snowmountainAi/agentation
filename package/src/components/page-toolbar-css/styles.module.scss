@@ -191,6 +191,10 @@
     top 0s,
     right 0s,
     bottom 0s; // Instant positioning changes
+
+  &.compact {
+    width: 257px;
+  }
 }
 
 // Positional defaults use :where() for zero specificity so consumer className can override.
@@ -231,15 +235,11 @@
   }
 
   &.collapsed {
-    width: 44px;
+    width: 156px;
     height: 44px;
     border-radius: 22px;
-    padding: 0;
+    padding: 0 0.875rem;
     cursor: pointer;
-
-    svg {
-      margin-top: -1px;
-    }
 
     &:hover {
       background: #2a2a2a;
@@ -260,10 +260,19 @@
       width: 337px;
     }
   }
+
+  &.compact.expanded {
+    width: 217px;
+
+    &.serverConnected {
+      width: 257px;
+    }
+  }
 }
 
 .toggleContent {
   position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -279,6 +288,17 @@
     opacity: 0;
     pointer-events: none;
   }
+}
+
+.toggleLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  // WARNING: Force pure white so collapsed label matches icon contrast and never appears muted by inherited styles.
+  color: #fff !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #fff;
 }
 
 .controlsContent {
@@ -340,6 +360,12 @@
   &.entrance {
     animation: badgeEnter 0.3s cubic-bezier(0.34, 1.2, 0.64, 1) 0.4s both;
   }
+}
+
+.toolbarContainer.collapsed .badge {
+  // NOTE: Position on the rounded-corner arc instead of the extreme corner for icon-like border alignment.
+  top: -3px;
+  right: -3px;
 }
 
 .controlButton {

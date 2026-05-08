@@ -62,11 +62,12 @@ import {
   saveToolbarHidden,
 } from "../../utils/storage";
 import {
-  createSession,
-  getSession,
-  syncAnnotation,
-  updateAnnotation as updateAnnotationOnServer,
-  deleteAnnotation as deleteAnnotationFromServer,
+  createSession as createSessionRaw,
+  getSession as getSessionRaw,
+  syncAnnotation as syncAnnotationRaw,
+  updateAnnotation as updateAnnotationOnServerRaw,
+  deleteAnnotation as deleteAnnotationFromServerRaw,
+  type SyncAuthOptions,
 } from "../../utils/sync";
 import { getReactComponentName } from "../../utils/react-detection";
 import {
@@ -304,12 +305,20 @@ export type PageFeedbackToolbarCSSProps = {
   copyToClipboard?: boolean;
   /** Server URL for sync (e.g., "http://localhost:4747"). If not provided, uses localStorage only. */
   endpoint?: string;
+  /** Optional auth token forwarded in headers for endpoint sync calls. */
+  endpointAuthToken?: string;
+  /** Header name for endpoint auth token. Defaults to Authorization. */
+  endpointAuthHeaderName?: string;
   /** Pre-existing session ID to join. If not provided with endpoint, creates a new session. */
   sessionId?: string;
   /** Called when a new session is created (only when endpoint is provided without sessionId). */
   onSessionCreated?: (sessionId: string) => void;
   /** Webhook URL to receive annotation events. */
   webhookUrl?: string;
+  /** Optional auth token forwarded in headers for webhook calls. */
+  webhookAuthToken?: string;
+  /** Header name for webhook auth token. Defaults to Authorization. */
+  webhookAuthHeaderName?: string;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
   /** Whether feedback mode starts expanded. Defaults to true. */
@@ -343,9 +352,13 @@ export function PageFeedbackToolbarCSS({
   onSubmit,
   copyToClipboard = true,
   endpoint,
+  endpointAuthToken,
+  endpointAuthHeaderName = "Authorization",
   sessionId: initialSessionId,
   onSessionCreated,
   webhookUrl,
+  webhookAuthToken,
+  webhookAuthHeaderName = "Authorization",
   className: userClassName,
   defaultOpen = true,
   showLayoutControl = false,
@@ -353,6 +366,39 @@ export function PageFeedbackToolbarCSS({
   showSettingsControl = false,
   enableLayoutModeHotkey = false,
 }: PageFeedbackToolbarCSSProps = {}) {
+  const endpointAuth: SyncAuthOptions = {
+    authToken: endpointAuthToken,
+    authHeaderName: endpointAuthHeaderName,
+  };
+  const createSession = useCallback(
+    (targetEndpoint: string, url: string) =>
+      createSessionRaw(targetEndpoint, url, endpointAuth),
+    [endpointAuthHeaderName, endpointAuthToken],
+  );
+  const getSession = useCallback(
+    (targetEndpoint: string, targetSessionId: string) =>
+      getSessionRaw(targetEndpoint, targetSessionId, endpointAuth),
+    [endpointAuthHeaderName, endpointAuthToken],
+  );
+  const syncAnnotation = useCallback(
+    (targetEndpoint: string, targetSessionId: string, annotation: Annotation) =>
+      syncAnnotationRaw(targetEndpoint, targetSessionId, annotation, endpointAuth),
+    [endpointAuthHeaderName, endpointAuthToken],
+  );
+  const updateAnnotationOnServer = useCallback(
+    (
+      targetEndpoint: string,
+      annotationId: string,
+      data: Partial<Annotation>,
+    ) => updateAnnotationOnServerRaw(targetEndpoint, annotationId, data, endpointAuth),
+    [endpointAuthHeaderName, endpointAuthToken],
+  );
+  const deleteAnnotationFromServer = useCallback(
+    (targetEndpoint: string, annotationId: string) =>
+      deleteAnnotationFromServerRaw(targetEndpoint, annotationId, endpointAuth),
+    [endpointAuthHeaderName, endpointAuthToken],
+  );
+
   const COLLAPSED_TOOLBAR_WIDTH = 156;
   const [isActive, setIsActive] = useState(defaultOpen);
   const isCompactToolbar = !showLayoutControl && !showMarkerVisibilityControl && !showSettingsControl;
@@ -975,7 +1021,11 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
 
     const checkHealth = async () => {
       try {
-        const response = await fetch(`${endpoint}/health`);
+        const response = await fetch(`${endpoint}/health`, {
+          headers: endpointAuthToken
+            ? { [endpointAuthHeaderName]: endpointAuthToken }
+            : undefined,
+        });
         if (response.ok) {
           setConnectionStatus("connected");
         } else {
@@ -990,15 +1040,25 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
     checkHealth();
     const interval = originalSetInterval(checkHealth, 10000);
     return () => clearInterval(interval);
-  }, [endpoint, mounted]);
+  }, [endpoint, mounted, endpointAuthHeaderName, endpointAuthToken]);
 
   // Listen for server-side annotation updates (e.g. resolved by agent)
   useEffect(() => {
     if (!endpoint || !mounted || !currentSessionId) return;
+    if (endpoint.includes("/agentation-proxy")) {
+      // NOTE: Console proxy mode currently handles request/response API calls only; SSE proxying is intentionally skipped.
+      return;
+    }
 
-    const eventSource = new EventSource(
-      `${endpoint}/sessions/${currentSessionId}/events`
-    );
+    let eventsUrl = `${endpoint}/sessions/${currentSessionId}/events`;
+    if (endpointAuthToken) {
+      // WARNING: Browser EventSource cannot set custom headers. We pass token via query param only for SSE.
+      const url = new URL(eventsUrl, typeof window !== "undefined" ? window.location.origin : undefined);
+      url.searchParams.set("agentationAuthToken", endpointAuthToken);
+      url.searchParams.set("agentationAuthHeader", endpointAuthHeaderName);
+      eventsUrl = url.toString();
+    }
+    const eventSource = new EventSource(eventsUrl);
 
     const removedStatuses = ["resolved", "dismissed"];
 
@@ -1056,7 +1116,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       eventSource.removeEventListener("annotation.updated", handler);
       eventSource.close();
     };
-  }, [endpoint, mounted, currentSessionId]);
+  }, [endpoint, mounted, currentSessionId, endpointAuthHeaderName, endpointAuthToken]);
 
   // Sync local annotations when connection is restored
   useEffect(() => {
@@ -2583,9 +2643,15 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       if (!targetUrl || (!settings.webhooksEnabled && !force)) return false;
 
       try {
+        const webhookHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (webhookAuthToken) {
+          webhookHeaders[webhookAuthHeaderName] = webhookAuthToken;
+        }
         const response = await fetch(targetUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: webhookHeaders,
           body: JSON.stringify({
             event,
             timestamp: Date.now(),
@@ -2600,7 +2666,13 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
         return false;
       }
     },
-    [webhookUrl, settings.webhookUrl, settings.webhooksEnabled],
+    [
+      webhookUrl,
+      settings.webhookUrl,
+      settings.webhooksEnabled,
+      webhookAuthHeaderName,
+      webhookAuthToken,
+    ],
   );
 
   // Add annotation

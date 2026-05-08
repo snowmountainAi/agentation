@@ -9,11 +9,33 @@
 
 import type { Annotation, Session, SessionWithAnnotations } from "../types";
 
+export type SyncAuthOptions = {
+  authToken?: string;
+  authHeaderName?: string;
+};
+
+function withAuthHeaders(
+  base: Record<string, string> = {},
+  auth?: SyncAuthOptions,
+): Record<string, string> {
+  if (!auth?.authToken) return base;
+  const headerName = auth.authHeaderName?.trim() || "Authorization";
+  return {
+    ...base,
+    [headerName]: auth.authToken,
+  };
+}
+
 /**
  * List all sessions from the server.
  */
-export async function listSessions(endpoint: string): Promise<Session[]> {
-  const response = await fetch(`${endpoint}/sessions`);
+export async function listSessions(
+  endpoint: string,
+  auth?: SyncAuthOptions,
+): Promise<Session[]> {
+  const response = await fetch(`${endpoint}/sessions`, {
+    headers: withAuthHeaders({}, auth),
+  });
   if (!response.ok) {
     throw new Error(`Failed to list sessions: ${response.status}`);
   }
@@ -25,11 +47,12 @@ export async function listSessions(endpoint: string): Promise<Session[]> {
  */
 export async function createSession(
   endpoint: string,
-  url: string
+  url: string,
+  auth?: SyncAuthOptions,
 ): Promise<Session> {
   const response = await fetch(`${endpoint}/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withAuthHeaders({ "Content-Type": "application/json" }, auth),
     body: JSON.stringify({ url }),
   });
 
@@ -45,9 +68,12 @@ export async function createSession(
  */
 export async function getSession(
   endpoint: string,
-  sessionId: string
+  sessionId: string,
+  auth?: SyncAuthOptions,
 ): Promise<SessionWithAnnotations> {
-  const response = await fetch(`${endpoint}/sessions/${sessionId}`);
+  const response = await fetch(`${endpoint}/sessions/${sessionId}`, {
+    headers: withAuthHeaders({}, auth),
+  });
 
   if (!response.ok) {
     throw new Error(`Failed to get session: ${response.status}`);
@@ -63,11 +89,12 @@ export async function getSession(
 export async function syncAnnotation(
   endpoint: string,
   sessionId: string,
-  annotation: Annotation
+  annotation: Annotation,
+  auth?: SyncAuthOptions,
 ): Promise<Annotation> {
   const response = await fetch(`${endpoint}/sessions/${sessionId}/annotations`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withAuthHeaders({ "Content-Type": "application/json" }, auth),
     body: JSON.stringify(annotation),
   });
 
@@ -84,11 +111,12 @@ export async function syncAnnotation(
 export async function updateAnnotation(
   endpoint: string,
   annotationId: string,
-  data: Partial<Annotation>
+  data: Partial<Annotation>,
+  auth?: SyncAuthOptions,
 ): Promise<Annotation> {
   const response = await fetch(`${endpoint}/annotations/${annotationId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: withAuthHeaders({ "Content-Type": "application/json" }, auth),
     body: JSON.stringify(data),
   });
 
@@ -104,10 +132,12 @@ export async function updateAnnotation(
  */
 export async function deleteAnnotation(
   endpoint: string,
-  annotationId: string
+  annotationId: string,
+  auth?: SyncAuthOptions,
 ): Promise<void> {
   const response = await fetch(`${endpoint}/annotations/${annotationId}`, {
     method: "DELETE",
+    headers: withAuthHeaders({}, auth),
   });
 
   if (!response.ok) {
@@ -133,11 +163,12 @@ export type ActionResponse = {
 export async function requestAction(
   endpoint: string,
   sessionId: string,
-  output: string
+  output: string,
+  auth?: SyncAuthOptions,
 ): Promise<ActionResponse> {
   const response = await fetch(`${endpoint}/sessions/${sessionId}/action`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withAuthHeaders({ "Content-Type": "application/json" }, auth),
     body: JSON.stringify({ output }),
   });
 

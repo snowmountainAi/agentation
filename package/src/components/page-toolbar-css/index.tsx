@@ -3252,7 +3252,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
   ]);
 
   // Send to webhook
-  const sendToWebhook = useCallback(async () => {
+  const sendToWebhook = useCallback(async (): Promise<{ success: boolean; output?: string; reason?: string }> => {
     const displayUrl =
       typeof window !== "undefined"
         ? window.location.pathname +
@@ -3264,7 +3264,9 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       displayUrl,
       settings.outputDetail,
     );
-    if (!output && designPlacements.length === 0 && !rearrangeState) return;
+    if (!output && designPlacements.length === 0 && !rearrangeState) {
+      return { success: false, reason: "no_content" };
+    }
     if (!output) output = `## Page Feedback: ${displayUrl}\n`;
 
     // Append design layout section if there are placements
@@ -3308,6 +3310,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
     if (success && settings.autoClearAfterCopy) {
       originalSetTimeout(() => clearAll(), 500);
     }
+    return { success, output };
   }, [
     onSubmit,
     fireWebhook,
@@ -3330,7 +3333,20 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
       const data = event?.data;
       if (!data || typeof data !== "object") return;
       if ((data as { type?: string }).type !== externalSubmitMessageType) return;
-      void sendToWebhook();
+      void sendToWebhook().then((result) => {
+        try {
+          window.parent?.postMessage(
+            {
+              type: "agentation.submit.result",
+              success: result.success,
+              reason: result.reason,
+            },
+            "*",
+          );
+        } catch {
+          // noop
+        }
+      });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

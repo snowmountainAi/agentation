@@ -3340,6 +3340,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
               type: "agentation.submit.result",
               success: result.success,
               reason: result.reason,
+              output: result.output,
             },
             "*",
           );

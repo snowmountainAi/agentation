@@ -319,6 +319,8 @@ export type PageFeedbackToolbarCSSProps = {
   webhookAuthToken?: string;
   /** Header name for webhook auth token. Defaults to Authorization. */
   webhookAuthHeaderName?: string;
+  /** Optional postMessage event type that can trigger "send to webhook" from a parent frame. */
+  externalSubmitMessageType?: string;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
   /** Whether feedback mode starts expanded. Defaults to true. */
@@ -359,6 +361,7 @@ export function PageFeedbackToolbarCSS({
   webhookUrl,
   webhookAuthToken,
   webhookAuthHeaderName = "Authorization",
+  externalSubmitMessageType = "agentation.submit",
   className: userClassName,
   defaultOpen = true,
   showLayoutControl = false,
@@ -3319,6 +3322,19 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
     settings.autoClearAfterCopy,
     clearAll,
   ]);
+
+  useEffect(() => {
+    if (!externalSubmitMessageType) return;
+    // NOTE: Qwikbuild Apply Feedback confirms in parent UI, then posts into iframe to trigger the exact same submit formatter path as toolbar send.
+    const onMessage = (event: MessageEvent) => {
+      const data = event?.data;
+      if (!data || typeof data !== "object") return;
+      if ((data as { type?: string }).type !== externalSubmitMessageType) return;
+      void sendToWebhook();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [externalSubmitMessageType, sendToWebhook]);
 
   // Toolbar dragging - mousemove and mouseup
   useEffect(() => {

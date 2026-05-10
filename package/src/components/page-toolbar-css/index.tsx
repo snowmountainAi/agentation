@@ -2657,13 +2657,15 @@ export function PageFeedbackToolbarCSS({
     return () => document.removeEventListener("mouseup", handleMouseUp);
   }, [isActive, isDragging]);
 
-  // Fire webhook for annotation events - returns true on success, false on failure
+  // Fire webhook (Qwikbuild fork: submit-only by default) - returns true on success, false on failure
   const fireWebhook = useCallback(
     async (
       event: string,
       payload: Record<string, unknown>,
       force?: boolean,
     ): Promise<boolean> => {
+      // In Qwikbuild we only allow explicit submit webhooks.
+      if (event !== "submit") return false;
       // Settings webhookUrl overrides prop
       const targetUrl = settings.webhookUrl || webhookUrl;
       // Skip if no URL, or if webhooks disabled (unless force is true for manual sends)

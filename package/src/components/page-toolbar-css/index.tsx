@@ -163,7 +163,8 @@ const DEFAULT_SETTINGS: ToolbarSettings = {
   reactEnabled: true,
   markerClickBehavior: "edit",
   webhookUrl: "",
-  webhooksEnabled: true,
+  // NOTE: Qwikbuild fork — only `sendToWebhook` / `agentation.submit` should POST the full bundle; annotation.* events stay off unless the user toggles Auto-Send in settings.
+  webhooksEnabled: false,
 };
 
 // Simple URL validation - checks for valid http(s) URL format

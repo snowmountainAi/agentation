@@ -370,7 +370,7 @@ export function PageFeedbackToolbarCSS({
   webhookAuthToken,
   webhookAuthHeaderName = "Authorization",
   externalSubmitMessageType = "agentation.submit",
-  showSendButton = true,
+  showSendButton = false,
   className: userClassName,
   defaultOpen = true,
   showLayoutControl = false,

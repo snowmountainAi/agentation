@@ -163,9 +163,14 @@ const DEFAULT_SETTINGS: ToolbarSettings = {
   reactEnabled: true,
   markerClickBehavior: "edit",
   webhookUrl: "",
-  // NOTE: Qwikbuild fork — only `sendToWebhook` / `agentation.submit` should POST the full bundle; annotation.* events stay off unless the user toggles Auto-Send in settings.
+  // NOTE: Qwikbuild — webhooks POST only from explicit Submit / `agentation.submit`; live `annotation.*` events require Auto-Send in settings.
   webhooksEnabled: false,
 };
+
+/** Persisted toolbar JSON in localStorage (`feedback-toolbar-settings`). */
+const TOOLBAR_SETTINGS_STORAGE_KEY = "feedback-toolbar-settings";
+/** One-shot migration: overwrite stored `webhooksEnabled` so installs that saved `true` do not auto-POST every annotation. */
+const WEBHOOK_SUBMIT_ONLY_MIGRATION_KEY = "agentation.webhookSubmitOnlyMigration.v1";
 
 // Simple URL validation - checks for valid http(s) URL format
 const isValidUrl = (url: string): boolean => {
@@ -614,20 +619,38 @@ export function PageFeedbackToolbarCSS({
     };
   }, []);
 
-const [settings, setSettings] = useState<ToolbarSettings>(() => {
-  try {
-    const saved = JSON.parse(localStorage.getItem("feedback-toolbar-settings") ?? "");
-    return {
-      ...DEFAULT_SETTINGS,
-      ...saved,
-      annotationColorId: COLOR_OPTIONS.find(c => c.id === saved.annotationColorId)
+  const [settings, setSettings] = useState<ToolbarSettings>(() => {
+    try {
+      const raw = localStorage.getItem(TOOLBAR_SETTINGS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      const saved = parsed && typeof parsed === "object" ? parsed : {};
+      const annotationColorId = COLOR_OPTIONS.find((c) => c.id === saved.annotationColorId)
         ? saved.annotationColorId
-        : DEFAULT_SETTINGS.annotationColorId,
-    };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
-});
+        : DEFAULT_SETTINGS.annotationColorId;
+
+      let next: ToolbarSettings = {
+        ...DEFAULT_SETTINGS,
+        ...saved,
+        annotationColorId,
+      };
+
+      if (typeof window !== "undefined") {
+        try {
+          if (!localStorage.getItem(WEBHOOK_SUBMIT_ONLY_MIGRATION_KEY)) {
+            next = { ...next, webhooksEnabled: false };
+            localStorage.setItem(WEBHOOK_SUBMIT_ONLY_MIGRATION_KEY, "1");
+            localStorage.setItem(TOOLBAR_SETTINGS_STORAGE_KEY, JSON.stringify(next));
+          }
+        } catch {
+          next = { ...next, webhooksEnabled: false };
+        }
+      }
+
+      return next;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  });
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [showEntranceAnimation, setShowEntranceAnimation] = useState(false);
 
@@ -786,10 +809,7 @@ const [settings, setSettings] = useState<ToolbarSettings>(() => {
   // Save settings
   useEffect(() => {
     if (mounted) {
-      localStorage.setItem(
-        "feedback-toolbar-settings",
-        JSON.stringify(settings),
-      );
+      localStorage.setItem(TOOLBAR_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     }
   }, [settings, mounted]);
 

@@ -327,6 +327,8 @@ export type PageFeedbackToolbarCSSProps = {
   webhookAuthHeaderName?: string;
   /** Optional postMessage event type that can trigger "send to webhook" from a parent frame. */
   externalSubmitMessageType?: string;
+  /** Whether to show the manual send button / S hotkey. Defaults to true. */
+  showSendButton?: boolean;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
   /** Whether feedback mode starts expanded. Defaults to true. */
@@ -368,6 +370,7 @@ export function PageFeedbackToolbarCSS({
   webhookAuthToken,
   webhookAuthHeaderName = "Authorization",
   externalSubmitMessageType = "agentation.submit",
+  showSendButton = true,
   className: userClassName,
   defaultOpen = true,
   showLayoutControl = false,
@@ -3634,7 +3637,7 @@ export function PageFeedbackToolbarCSS({
       }
 
       // "S" to send annotations
-      if (e.key === "s" || e.key === "S") {
+      if (showSendButton && (e.key === "s" || e.key === "S")) {
         const hasValidWebhook =
           isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "");
         if (
@@ -3671,6 +3674,7 @@ export function PageFeedbackToolbarCSS({
     showLayoutControl,
     showMarkerVisibilityControl,
     enableLayoutModeHotkey,
+    showSendButton,
   ]);
 
   if (!mounted) return null;
@@ -3910,45 +3914,46 @@ export function PageFeedbackToolbarCSS({
               </span>
             </div>
 
-            {/* Send button - only visible when webhook URL is available AND auto-send is off */}
-            <div
-              className={`${styles.buttonWrapper} ${styles.sendButtonWrapper} ${isActive && !settings.webhooksEnabled && (isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "")) ? styles.sendButtonVisible : ""}`}
-            >
-              <button
-                className={`${styles.controlButton} ${sendState === "sent" || sendState === "failed" ? styles.statusShowing : ""}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  hideTooltipsUntilMouseLeave();
-                  sendToWebhook();
-                }}
-                disabled={
-                  !hasAnnotations ||
-                  (!isValidUrl(settings.webhookUrl) &&
-                    !isValidUrl(webhookUrl || "")) ||
-                  sendState === "sending"
-                }
-                data-no-hover={sendState === "sent" || sendState === "failed"}
-                tabIndex={
-                  isValidUrl(settings.webhookUrl) ||
-                  isValidUrl(webhookUrl || "")
-                    ? 0
-                    : -1
-                }
+            {showSendButton && (
+              <div
+                className={`${styles.buttonWrapper} ${styles.sendButtonWrapper} ${isActive && !settings.webhooksEnabled && (isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "")) ? styles.sendButtonVisible : ""}`}
               >
-                <IconSendArrow size={24} state={sendState} />
-                {hasAnnotations && sendState === "idle" && (
-                  <span
-                    className={styles.buttonBadge}
-                  >
-                    {annotations.length}
-                  </span>
-                )}
-              </button>
-              <span className={styles.buttonTooltip}>
-                Send Annotations
-                <span className={styles.shortcut}>S</span>
-              </span>
-            </div>
+                <button
+                  className={`${styles.controlButton} ${sendState === "sent" || sendState === "failed" ? styles.statusShowing : ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    hideTooltipsUntilMouseLeave();
+                    sendToWebhook();
+                  }}
+                  disabled={
+                    !hasAnnotations ||
+                    (!isValidUrl(settings.webhookUrl) &&
+                      !isValidUrl(webhookUrl || "")) ||
+                    sendState === "sending"
+                  }
+                  data-no-hover={sendState === "sent" || sendState === "failed"}
+                  tabIndex={
+                    isValidUrl(settings.webhookUrl) ||
+                    isValidUrl(webhookUrl || "")
+                      ? 0
+                      : -1
+                  }
+                >
+                  <IconSendArrow size={24} state={sendState} />
+                  {hasAnnotations && sendState === "idle" && (
+                    <span
+                      className={styles.buttonBadge}
+                    >
+                      {annotations.length}
+                    </span>
+                  )}
+                </button>
+                <span className={styles.buttonTooltip}>
+                  Send Annotations
+                  <span className={styles.shortcut}>S</span>
+                </span>
+              </div>
+            )}
 
             <div className={styles.buttonWrapper}>
               <button

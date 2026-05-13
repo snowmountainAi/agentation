@@ -9,10 +9,12 @@ const mockClipboard = {
 };
 
 beforeEach(() => {
+  localStorage.clear();
   vi.stubGlobal("navigator", {
     clipboard: mockClipboard,
     userAgent: "test-agent",
   });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
   mockClipboard.writeText.mockClear();
 });
 
@@ -76,6 +78,70 @@ describe("PageFeedbackToolbarCSS", () => {
           />
         )
       ).not.toThrow();
+    });
+  });
+
+  describe("external submit", () => {
+    it("sends pending annotations from all stored pages in submit format", async () => {
+      localStorage.setItem(
+        "feedback-annotations-/",
+        JSON.stringify([
+          {
+            id: "current-page",
+            x: 25,
+            y: 100,
+            comment: "Fix current page",
+            element: "Button",
+            elementPath: "body > button",
+            timestamp: Date.now(),
+            status: "pending",
+          },
+        ]),
+      );
+      localStorage.setItem(
+        "feedback-annotations-/settings",
+        JSON.stringify([
+          {
+            id: "settings-page",
+            x: 40,
+            y: 160,
+            comment: "Fix settings page",
+            element: "Input",
+            elementPath: "body > form > input",
+            timestamp: Date.now(),
+            status: "pending",
+          },
+        ]),
+      );
+
+      render(
+        <PageFeedbackToolbarCSS
+          webhookUrl="https://example.test/agentation-webhook"
+          externalSubmitMessageType="agentation.submit"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+      });
+
+      window.postMessage({ type: "agentation.submit" }, "*");
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith(
+          "https://example.test/agentation-webhook",
+          expect.objectContaining({ method: "POST" }),
+        );
+      });
+
+      const [, request] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+      const payload = JSON.parse(request.body);
+      expect(payload.event).toBe("submit");
+      expect(payload.annotations).toHaveLength(2);
+      expect(payload.output).toContain("## Page Feedback: /");
+      expect(payload.output).toContain("Fix current page");
+      expect(payload.output).toContain("## Page Feedback: /settings");
+      expect(payload.output).toContain("Fix settings page");
     });
   });
 });

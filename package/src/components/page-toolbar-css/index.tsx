@@ -272,6 +272,39 @@ function isRenderableAnnotation(annotation: Annotation): boolean {
   return annotation.status !== "resolved" && annotation.status !== "dismissed";
 }
 
+function appendCurrentPageDesignOutput(
+  output: string,
+  displayUrl: string,
+  detailLevel: OutputDetailLevel,
+  designPlacements: DesignPlacement[],
+  rearrangeState: RearrangeState | null,
+  blankCanvas: boolean,
+  wireframePurpose: string,
+): string {
+  let next = output;
+
+  if (designPlacements.length > 0) {
+    if (!next) next = `## Page Feedback: ${displayUrl}\n`;
+    next += "\n" + generateDesignOutput(designPlacements, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }, { blankCanvas, wireframePurpose: wireframePurpose || undefined }, detailLevel);
+  }
+
+  if (rearrangeState) {
+    const rearrangeOutput = generateRearrangeOutput(rearrangeState, detailLevel, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
+    if (rearrangeOutput) {
+      if (!next) next = `## Page Feedback: ${displayUrl}\n`;
+      next += "\n" + rearrangeOutput;
+    }
+  }
+
+  return next;
+}
+
 function detectSourceFile(element: Element): string | undefined {
   const result = getSourceLocation(element as HTMLElement);
   const loc = result.found ? result : findNearestComponentSource(element as HTMLElement);
@@ -3277,46 +3310,107 @@ export function PageFeedbackToolbarCSS({
     onCopy,
   ]);
 
-  // Send to webhook
-  const sendToWebhook = useCallback(async (): Promise<{ success: boolean; output?: string; reason?: string }> => {
+  const buildSubmitPayload = useCallback((includeAllPages: boolean): { output: string; annotations: Annotation[] } => {
     const displayUrl =
       typeof window !== "undefined"
         ? window.location.pathname +
           window.location.search +
           window.location.hash
         : pathname;
-    let output = generateOutput(
-      annotations,
-      displayUrl,
-      settings.outputDetail,
-    );
-    if (!output && designPlacements.length === 0 && !rearrangeState) {
-      return { success: false, reason: "no_content" };
-    }
-    if (!output) output = `## Page Feedback: ${displayUrl}\n`;
 
-    // Append design layout section if there are placements
-    if (designPlacements.length > 0) {
-      output += "\n" + generateDesignOutput(designPlacements, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      }, { blankCanvas, wireframePurpose: wireframePurpose || undefined }, settings.outputDetail);
+    if (!includeAllPages) {
+      const output = appendCurrentPageDesignOutput(
+        generateOutput(annotations, displayUrl, settings.outputDetail),
+        displayUrl,
+        settings.outputDetail,
+        designPlacements,
+        rearrangeState,
+        blankCanvas,
+        wireframePurpose,
+      );
+      return { output, annotations };
     }
 
-    // Append rearrange section if sections were reordered
-    if (rearrangeState) {
-      const rearrangeOutput = generateRearrangeOutput(rearrangeState, settings.outputDetail, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
-      if (rearrangeOutput) {
-        output += "\n" + rearrangeOutput;
+    const byPage = loadAllAnnotations<Annotation>();
+    // Qwikbuild Apply Feedback calls `/pending` before posting `agentation.submit`
+    // into the preview iframe. The normal toolbar state only contains the current
+    // pathname, while `/pending` aggregates every synced pending annotation. Read
+    // localStorage across pages here so the webhook payload keeps the submit
+    // button format (`output` + `annotations`) without silently dropping notes
+    // made on another route.
+    byPage.set(pathname, annotations);
+
+    const allAnnotations: Annotation[] = [];
+    const blocks: string[] = [];
+    let currentPageBlockAdded = false;
+    for (const [pagePath, pageAnnotations] of byPage) {
+      const renderableAnnotations = pageAnnotations.filter(isRenderableAnnotation);
+      allAnnotations.push(...renderableAnnotations);
+
+      const pageLabel = pagePath === pathname ? displayUrl : pagePath;
+      let block = generateOutput(
+        renderableAnnotations,
+        pageLabel,
+        settings.outputDetail,
+      );
+      if (pagePath === pathname) {
+        block = appendCurrentPageDesignOutput(
+          block,
+          displayUrl,
+          settings.outputDetail,
+          designPlacements,
+          rearrangeState,
+          blankCanvas,
+          wireframePurpose,
+        );
       }
+      if (block) {
+        blocks.push(block);
+        if (pagePath === pathname) currentPageBlockAdded = true;
+      }
+    }
+
+    if (!currentPageBlockAdded && (designPlacements.length > 0 || rearrangeState)) {
+      const currentDesignOutput = appendCurrentPageDesignOutput(
+        "",
+        displayUrl,
+        settings.outputDetail,
+        designPlacements,
+        rearrangeState,
+        blankCanvas,
+        wireframePurpose,
+      );
+      if (currentDesignOutput) blocks.push(currentDesignOutput);
+    }
+
+    return {
+      output: blocks.join("\n\n").trim(),
+      annotations: allAnnotations,
+    };
+  }, [
+    annotations,
+    designPlacements,
+    rearrangeState,
+    blankCanvas,
+    pathname,
+    settings.outputDetail,
+    wireframePurpose,
+  ]);
+
+  // Send to webhook
+  const sendToWebhook = useCallback(async (
+    options: { includeAllPages?: boolean } = {},
+  ): Promise<{ success: boolean; output?: string; reason?: string }> => {
+    const { output, annotations: submittedAnnotations } = buildSubmitPayload(
+      options.includeAllPages === true,
+    );
+    if (!output) {
+      return { success: false, reason: "no_content" };
     }
 
     // Fire onSubmit callback
     if (onSubmit) {
-      onSubmit(output, annotations);
+      onSubmit(output, submittedAnnotations);
     }
 
     // Start sending (arrow fades)
@@ -3326,7 +3420,7 @@ export function PageFeedbackToolbarCSS({
     await new Promise((resolve) => originalSetTimeout(resolve, 150));
 
     // Fire webhook and check result (force=true to bypass webhooksEnabled check for manual sends)
-    const success = await fireWebhook("submit", { output, annotations }, true);
+    const success = await fireWebhook("submit", { output, annotations: submittedAnnotations }, true);
 
     // Show result
     setSendState(success ? "sent" : "failed");
@@ -3340,14 +3434,7 @@ export function PageFeedbackToolbarCSS({
   }, [
     onSubmit,
     fireWebhook,
-    annotations,
-    designPlacements,
-    rearrangeState,
-    blankCanvas,
-    canvasPurpose,
-    pathname,
-    settings.outputDetail,
-    effectiveReactMode,
+    buildSubmitPayload,
     settings.autoClearAfterCopy,
     clearAll,
   ]);
@@ -3359,7 +3446,7 @@ export function PageFeedbackToolbarCSS({
       const data = event?.data;
       if (!data || typeof data !== "object") return;
       if ((data as { type?: string }).type !== externalSubmitMessageType) return;
-      void sendToWebhook().then((result) => {
+      void sendToWebhook({ includeAllPages: true }).then((result) => {
         try {
           window.parent?.postMessage(
             {

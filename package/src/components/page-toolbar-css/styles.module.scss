@@ -176,7 +176,7 @@
   position: fixed;
   bottom: 1.25rem;
   right: 1.25rem;
-  width: 337px;
+  width: var(--agentation-toolbar-width, 337px);
   z-index: 100000;
   font-family:
     system-ui,
@@ -193,7 +193,7 @@
     bottom 0s; // Instant positioning changes
 
   &.compact {
-    width: 257px;
+    width: var(--agentation-toolbar-width, 257px);
   }
 }
 
@@ -254,18 +254,18 @@
     height: 44px;
     border-radius: 1.5rem;
     padding: 0.375rem;
-    width: 297px;
+    width: var(--agentation-expanded-width, 297px);
 
     &.serverConnected {
-      width: 337px;
+      width: var(--agentation-expanded-width, 337px);
     }
   }
 
   &.compact.expanded {
-    width: 217px;
+    width: var(--agentation-expanded-width, 217px);
 
     &.serverConnected {
-      width: 257px;
+      width: var(--agentation-expanded-width, 257px);
     }
   }
 }

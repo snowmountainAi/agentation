@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor } from "@testing-library/react";
 import { PageFeedbackToolbarCSS } from "./index";
 import type { Annotation } from "../../types";
 
@@ -120,10 +120,6 @@ describe("PageFeedbackToolbarCSS", () => {
           externalSubmitMessageType="agentation.submit"
         />,
       );
-
-      await waitFor(() => {
-        expect(screen.getAllByText("1").length).toBeGreaterThan(0);
-      });
 
       window.postMessage({ type: "agentation.submit" }, "*");
 

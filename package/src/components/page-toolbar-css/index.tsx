@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -8,8 +8,10 @@ import {
   AnnotationPopupCSSHandle,
 } from "../annotation-popup-css";
 import {
+  IconListSparkle,
   IconGear,
   IconCopyAnimated,
+  IconSendArrow,
   IconTrashAlt,
   IconEyeAnimated,
   IconPausePlayAnimated,
@@ -359,20 +361,14 @@ export type PageFeedbackToolbarCSSProps = {
   webhookAuthHeaderName?: string;
   /** Optional postMessage event type that can trigger "send to webhook" from a parent frame. */
   externalSubmitMessageType?: string;
-  /** Whether to show the manual send button / S hotkey. Defaults to true. */
+  /** Whether to show the manual send button / S hotkey. Kept for template compatibility. */
   showSendButton?: boolean;
+  /** Optional postMessage event type that toggles feedback capture from a parent frame. */
+  externalModeMessageType?: string;
+  /** Whether to render Agentation's built-in toolbar. */
+  showToolbar?: boolean;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
-  /** Whether feedback mode starts expanded. Defaults to true. */
-  defaultOpen?: boolean;
-  /** Whether to show the layout mode control (and related L hotkey). Defaults to false. */
-  showLayoutControl?: boolean;
-  /** Whether to show the marker visibility control (and related H hotkey). Defaults to false. */
-  showMarkerVisibilityControl?: boolean;
-  /** Whether to show the settings control and panel access. Defaults to false. */
-  showSettingsControl?: boolean;
-  /** Whether the L keyboard shortcut can toggle layout mode. Defaults to false. */
-  enableLayoutModeHotkey?: boolean;
 };
 
 /** Alias for PageFeedbackToolbarCSSProps */
@@ -402,13 +398,10 @@ export function PageFeedbackToolbarCSS({
   webhookAuthToken,
   webhookAuthHeaderName = "Authorization",
   externalSubmitMessageType = "agentation.submit",
-  showSendButton = false,
+  showSendButton = true,
+  externalModeMessageType = "agentation.mode",
+  showToolbar = false,
   className: userClassName,
-  defaultOpen = true,
-  showLayoutControl = false,
-  showMarkerVisibilityControl = false,
-  showSettingsControl = false,
-  enableLayoutModeHotkey = false,
 }: PageFeedbackToolbarCSSProps = {}) {
   const endpointAuth: SyncAuthOptions = {
     authToken: endpointAuthToken,
@@ -443,13 +436,7 @@ export function PageFeedbackToolbarCSS({
     [endpointAuthHeaderName, endpointAuthToken],
   );
 
-  const COLLAPSED_TOOLBAR_WIDTH = 156;
-  const BUTTON_SIZE = 34;
-  const BUTTON_GAP = 6;
-  const TOOLBAR_HORIZONTAL_PADDING = 12;
-  const DIVIDER_WIDTH = 5;
-  const [isActive, setIsActive] = useState(defaultOpen);
-  const isCompactToolbar = !showLayoutControl && !showMarkerVisibilityControl && !showSettingsControl;
+  const [isActive, setIsActive] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [showMarkers, setShowMarkers] = useState(true);
   const [isToolbarHidden, setIsToolbarHidden] = useState(() => loadToolbarHidden());
@@ -512,6 +499,9 @@ export function PageFeedbackToolbarCSS({
     targetElement?: HTMLElement;
   } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [sendState, setSendState] = useState<
+    "idle" | "sending" | "sent" | "failed"
+  >("idle");
   const [cleared, setCleared] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null);
@@ -758,24 +748,6 @@ export function PageFeedbackToolbarCSS({
   const pathname =
     typeof window !== "undefined" ? window.location.pathname : "/";
 
-  const hasAnnotations = annotations.length > 0;
-  const visibleToolbarButtonCount =
-    4 +
-    (showLayoutControl ? 1 : 0) +
-    (showMarkerVisibilityControl ? 1 : 0) +
-    (showSettingsControl ? 1 : 0);
-  const visibleToolbarDividerCount = showSettingsControl ? 1 : 0;
-  const visibleToolbarItemCount =
-    visibleToolbarButtonCount + visibleToolbarDividerCount;
-  const expandedToolbarWidth =
-    TOOLBAR_HORIZONTAL_PADDING +
-    visibleToolbarButtonCount * BUTTON_SIZE +
-    visibleToolbarDividerCount * DIVIDER_WIDTH +
-    Math.max(0, visibleToolbarItemCount - 1) * BUTTON_GAP;
-  const toolbarWrapperWidth = isActive
-    ? expandedToolbarWidth
-    : COLLAPSED_TOOLBAR_WIDTH;
-
   // Handle showSettings changes with exit animation
   useEffect(() => {
     if (showSettings) {
@@ -828,7 +800,7 @@ export function PageFeedbackToolbarCSS({
     setAnnotations(stored.filter(isRenderableAnnotation));
 
     // Trigger entrance animation only on first load (not on SPA navigation)
-    if (!defaultOpen && !hasPlayedEntranceAnimation) {
+    if (!hasPlayedEntranceAnimation) {
       setShowEntranceAnimation(true);
       hasPlayedEntranceAnimation = true;
       // Remove animation class after it completes (toolbar: 500ms, badge: 400ms delay + 300ms)
@@ -3274,38 +3246,19 @@ export function PageFeedbackToolbarCSS({
       }
     }
 
-    let copySucceeded = !copyToClipboard;
     if (copyToClipboard) {
       try {
         await navigator.clipboard.writeText(output);
-        copySucceeded = true;
       } catch {
-        // WARNING: Clipboard APIs can be blocked in iframe contexts without delegated permission; fallback to execCommand for broader compatibility.
-        const textarea = document.createElement("textarea");
-        textarea.value = output;
-        textarea.setAttribute("readonly", "");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        textarea.style.left = "-9999px";
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-          copySucceeded = document.execCommand("copy");
-        } catch {
-          copySucceeded = false;
-        } finally {
-          document.body.removeChild(textarea);
-        }
+        // Clipboard may fail (permissions, not HTTPS, etc.) - continue anyway
       }
     }
 
     // Fire callback with markdown output (always, regardless of clipboard success)
     onCopy?.(output);
 
-    if (copySucceeded) {
-      setCopied(true);
-      originalSetTimeout(() => setCopied(false), 2000);
-    }
+    setCopied(true);
+    originalSetTimeout(() => setCopied(false), 2000);
 
     if (settings.autoClearAfterCopy) {
       originalSetTimeout(() => clearAll(), 500);
@@ -3431,8 +3384,18 @@ export function PageFeedbackToolbarCSS({
       onSubmit(output, submittedAnnotations);
     }
 
+    // Start sending (arrow fades)
+    setSendState("sending");
+
+    // Brief delay for the fade effect
+    await new Promise((resolve) => originalSetTimeout(resolve, 150));
+
     // Fire webhook and check result (force=true to bypass webhooksEnabled check for manual sends)
     const success = await fireWebhook("submit", { output, annotations: submittedAnnotations }, true);
+
+    // Show result
+    setSendState(success ? "sent" : "failed");
+    originalSetTimeout(() => setSendState("idle"), 2500);
 
     // Clear annotations if send succeeded and autoClearAfterCopy is enabled
     if (success && settings.autoClearAfterCopy) {
@@ -3474,6 +3437,39 @@ export function PageFeedbackToolbarCSS({
     return () => window.removeEventListener("message", onMessage);
   }, [externalSubmitMessageType, sendToWebhook]);
 
+  useEffect(() => {
+    if (!externalModeMessageType) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event?.data;
+      if (!data || typeof data !== "object") return;
+      if ((data as { type?: string }).type !== externalModeMessageType) return;
+      const payload = data as { mode?: string; isActive?: boolean };
+      const nextActive =
+        typeof payload.isActive === "boolean"
+          ? payload.isActive
+          : payload.mode === "comment" || payload.mode === "feedback";
+      setIsActive(nextActive);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [externalModeMessageType]);
+
+  useEffect(() => {
+    if (!externalModeMessageType) return;
+    try {
+      window.parent?.postMessage(
+        {
+          type: "agentation.mode.changed",
+          isActive,
+          mode: isActive ? "comment" : "try",
+        },
+        "*",
+      );
+    } catch {
+      // noop
+    }
+  }, [externalModeMessageType, isActive]);
+
   // Toolbar dragging - mousemove and mouseup
   useEffect(() => {
     if (!dragStartPos) return;
@@ -3497,14 +3493,16 @@ export function PageFeedbackToolbarCSS({
 
         // Constrain to viewport
         const padding = 20;
-        const wrapperWidth = toolbarWrapperWidth;
+        const wrapperWidth = 337; // .toolbar wrapper width
         const toolbarHeight = 44;
 
         // Content is right-aligned within wrapper via margin-left: auto
         // Calculate content width based on state
         const contentWidth = isActive
-          ? expandedToolbarWidth
-          : COLLAPSED_TOOLBAR_WIDTH;
+          ? connectionStatus === "connected"
+            ? 297
+            : 257
+          : 44; // collapsed circle
 
         // Content offset from wrapper left edge
         const contentOffset = wrapperWidth - contentWidth;
@@ -3540,7 +3538,7 @@ export function PageFeedbackToolbarCSS({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [dragStartPos, isDraggingToolbar, isActive, toolbarWrapperWidth, expandedToolbarWidth]);
+  }, [dragStartPos, isDraggingToolbar, isActive, connectionStatus]);
 
   // Handle toolbar drag start
   const handleToolbarMouseDown = useCallback(
@@ -3580,7 +3578,7 @@ export function PageFeedbackToolbarCSS({
 
     const constrainPosition = () => {
       const padding = 20;
-      const wrapperWidth = toolbarWrapperWidth;
+      const wrapperWidth = 337; // .toolbar wrapper width
       const toolbarHeight = 44;
 
       let newX = toolbarPosition.x;
@@ -3589,8 +3587,10 @@ export function PageFeedbackToolbarCSS({
       // Content is right-aligned within wrapper via margin-left: auto
       // Calculate content width based on state
       const contentWidth = isActive
-        ? expandedToolbarWidth
-        : COLLAPSED_TOOLBAR_WIDTH;
+        ? connectionStatus === "connected"
+          ? 297
+          : 257
+        : 44; // collapsed circle
 
       // Content offset from wrapper left edge
       const contentOffset = wrapperWidth - contentWidth;
@@ -3617,7 +3617,7 @@ export function PageFeedbackToolbarCSS({
 
     window.addEventListener("resize", constrainPosition);
     return () => window.removeEventListener("resize", constrainPosition);
-  }, [toolbarPosition, isActive, toolbarWrapperWidth, expandedToolbarWidth]);
+  }, [toolbarPosition, isActive, connectionStatus]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -3680,11 +3680,7 @@ export function PageFeedbackToolbarCSS({
       }
 
       // "L" to toggle layout mode
-      if (
-        showLayoutControl &&
-        enableLayoutModeHotkey &&
-        (e.key === "l" || e.key === "L")
-      ) {
+      if (e.key === "l" || e.key === "L") {
         e.preventDefault();
         hideTooltipsUntilMouseLeave();
         if (isDrawMode) setIsDrawMode(false);
@@ -3698,10 +3694,7 @@ export function PageFeedbackToolbarCSS({
       }
 
       // "H" to toggle marker visibility
-      if (
-        showMarkerVisibilityControl &&
-        (e.key === "h" || e.key === "H")
-      ) {
+      if (e.key === "h" || e.key === "H") {
         if (annotations.length > 0) {
           e.preventDefault();
           hideTooltipsUntilMouseLeave();
@@ -3729,6 +3722,20 @@ export function PageFeedbackToolbarCSS({
         }
       }
 
+      // "S" to send annotations
+      if (showSendButton && (e.key === "s" || e.key === "S")) {
+        const hasValidWebhook =
+          isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "");
+        if (
+          annotations.length > 0 &&
+          hasValidWebhook &&
+          sendState === "idle"
+        ) {
+          e.preventDefault();
+          hideTooltipsUntilMouseLeave();
+          sendToWebhook();
+        }
+      }
     };
 
     document.addEventListener("keydown", handleKeyDown);
@@ -3742,30 +3749,21 @@ export function PageFeedbackToolbarCSS({
     rearrangeState,
     pendingAnnotation,
     annotations.length,
+    settings.webhookUrl,
+    webhookUrl,
+    sendState,
+    sendToWebhook,
     toggleFreeze,
     copyOutput,
     clearAll,
     pendingMultiSelectElements,
-    showLayoutControl,
-    showMarkerVisibilityControl,
-    enableLayoutModeHotkey,
+    showSendButton,
   ]);
 
   if (!mounted) return null;
   if (isToolbarHidden) return null;
 
-  const toolbarStyle = {
-    "--agentation-toolbar-width": `${toolbarWrapperWidth}px`,
-    "--agentation-expanded-width": `${expandedToolbarWidth}px`,
-    ...(toolbarPosition
-      ? {
-          left: toolbarPosition.x,
-          top: toolbarPosition.y,
-          right: "auto",
-          bottom: "auto",
-        }
-      : {}),
-  } as CSSProperties;
+  const hasAnnotations = annotations.length > 0;
 
   // Filter annotations for rendering (exclude exiting ones from normal flow)
   const visibleAnnotations = annotations.filter(
@@ -3825,15 +3823,25 @@ export function PageFeedbackToolbarCSS({
   return createPortal(
     <div ref={portalWrapperRef} style={{ display: "contents" }} data-agentation-theme={isDarkMode ? "dark" : "light"} data-agentation-accent={settings.annotationColorId} data-agentation-root="">
       {/* Toolbar */}
+      {showToolbar ? (
       <div
-        className={`${styles.toolbar} ${isCompactToolbar ? styles.compact : ""}${userClassName ? ` ${userClassName}` : ""}`}
+        className={`${styles.toolbar}${userClassName ? ` ${userClassName}` : ""}`}
         data-feedback-toolbar
         data-agentation-toolbar
-        style={toolbarStyle}
+        style={
+          toolbarPosition
+            ? {
+                left: toolbarPosition.x,
+                top: toolbarPosition.y,
+                right: "auto",
+                bottom: "auto",
+              }
+            : undefined
+        }
       >
         {/* Morphing container */}
         <div
-          className={`${styles.toolbarContainer} ${isCompactToolbar ? styles.compact : ""} ${isActive ? styles.expanded : styles.collapsed} ${showEntranceAnimation ? styles.entrance : ""} ${isToolbarHiding ? styles.hiding : ""}`}
+          className={`${styles.toolbarContainer} ${isActive ? styles.expanded : styles.collapsed} ${showEntranceAnimation ? styles.entrance : ""} ${isToolbarHiding ? styles.hiding : ""} ${!settings.webhooksEnabled && (isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "")) ? styles.serverConnected : ""}`}
           onClick={
             !isActive
               ? (e) => {
@@ -3856,7 +3864,7 @@ export function PageFeedbackToolbarCSS({
           <div
             className={`${styles.toggleContent} ${!isActive ? styles.visible : styles.hidden}`}
           >
-            <span className={styles.toggleLabel}>Feedback mode</span>
+            <IconListSparkle size={24} />
             {hasVisibleAnnotations && (
               <span
                 className={`${styles.badge} ${isActive ? styles.fadeOut : ""} ${showEntranceAnimation ? styles.entrance : ""}`}
@@ -3921,7 +3929,6 @@ export function PageFeedbackToolbarCSS({
             </div>
             */}
 
-            {showLayoutControl && (
             <div className={styles.buttonWrapper}>
               <button
                 className={`${styles.controlButton} ${!isDarkMode ? styles.light : ""}`}
@@ -3947,9 +3954,7 @@ export function PageFeedbackToolbarCSS({
                 <span className={styles.shortcut}>L</span>
               </span>
             </div>
-            )}
 
-            {showMarkerVisibilityControl && (
             <div className={styles.buttonWrapper}>
               <button
                 className={styles.controlButton}
@@ -3967,7 +3972,6 @@ export function PageFeedbackToolbarCSS({
                 <span className={styles.shortcut}>H</span>
               </span>
             </div>
-            )}
 
             <div className={styles.buttonWrapper}>
               <button
@@ -3990,6 +3994,48 @@ export function PageFeedbackToolbarCSS({
               </span>
             </div>
 
+            {/* Send button - only visible when webhook URL is available AND auto-send is off */}
+            {showSendButton ? (
+            <div
+              className={`${styles.buttonWrapper} ${styles.sendButtonWrapper} ${isActive && !settings.webhooksEnabled && (isValidUrl(settings.webhookUrl) || isValidUrl(webhookUrl || "")) ? styles.sendButtonVisible : ""}`}
+            >
+              <button
+                className={`${styles.controlButton} ${sendState === "sent" || sendState === "failed" ? styles.statusShowing : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  hideTooltipsUntilMouseLeave();
+                  sendToWebhook();
+                }}
+                disabled={
+                  !hasAnnotations ||
+                  (!isValidUrl(settings.webhookUrl) &&
+                    !isValidUrl(webhookUrl || "")) ||
+                  sendState === "sending"
+                }
+                data-no-hover={sendState === "sent" || sendState === "failed"}
+                tabIndex={
+                  isValidUrl(settings.webhookUrl) ||
+                  isValidUrl(webhookUrl || "")
+                    ? 0
+                    : -1
+                }
+              >
+                <IconSendArrow size={24} state={sendState} />
+                {hasAnnotations && sendState === "idle" && (
+                  <span
+                    className={styles.buttonBadge}
+                  >
+                    {annotations.length}
+                  </span>
+                )}
+              </button>
+              <span className={styles.buttonTooltip}>
+                Send Annotations
+                <span className={styles.shortcut}>S</span>
+              </span>
+            </div>
+            ) : null}
+
             <div className={styles.buttonWrapper}>
               <button
                 className={styles.controlButton}
@@ -4008,8 +4054,7 @@ export function PageFeedbackToolbarCSS({
                 <span className={styles.shortcut}>X</span>
               </span>
             </div>
-            
-            {showSettingsControl && (
+
             <div className={styles.buttonWrapper}>
               <button
                 className={styles.controlButton}
@@ -4034,13 +4079,10 @@ export function PageFeedbackToolbarCSS({
               )}
               <span className={styles.buttonTooltip}>Settings</span>
             </div>
-            )}
 
-            {showSettingsControl && (
             <div
               className={styles.divider}
             />
-            )}
 
             <div
               className={`${styles.buttonWrapper} ${
@@ -4218,6 +4260,7 @@ export function PageFeedbackToolbarCSS({
           />
         </div>
       </div>
+      ) : null}
 
       {/* Blank canvas backdrop — stays mounted so opacity transition works on open/close */}
       {(isDesignMode || designOverlayExiting) && (

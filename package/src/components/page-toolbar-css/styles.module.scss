@@ -176,7 +176,7 @@
   position: fixed;
   bottom: 1.25rem;
   right: 1.25rem;
-  width: var(--agentation-toolbar-width, 337px);
+  width: 337px;
   z-index: 100000;
   font-family:
     system-ui,
@@ -191,10 +191,6 @@
     top 0s,
     right 0s,
     bottom 0s; // Instant positioning changes
-
-  &.compact {
-    width: var(--agentation-toolbar-width, 257px);
-  }
 }
 
 // Positional defaults use :where() for zero specificity so consumer className can override.
@@ -235,11 +231,15 @@
   }
 
   &.collapsed {
-    width: 156px;
+    width: 44px;
     height: 44px;
     border-radius: 22px;
-    padding: 0 0.875rem;
+    padding: 0;
     cursor: pointer;
+
+    svg {
+      margin-top: -1px;
+    }
 
     &:hover {
       background: #2a2a2a;
@@ -254,25 +254,16 @@
     height: 44px;
     border-radius: 1.5rem;
     padding: 0.375rem;
-    width: var(--agentation-expanded-width, 297px);
+    width: 297px;
 
     &.serverConnected {
-      width: var(--agentation-expanded-width, 337px);
-    }
-  }
-
-  &.compact.expanded {
-    width: var(--agentation-expanded-width, 217px);
-
-    &.serverConnected {
-      width: var(--agentation-expanded-width, 257px);
+      width: 337px;
     }
   }
 }
 
 .toggleContent {
   position: absolute;
-  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -288,17 +279,6 @@
     opacity: 0;
     pointer-events: none;
   }
-}
-
-.toggleLabel {
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  // WARNING: Force pure white so collapsed label matches icon contrast and never appears muted by inherited styles.
-  color: #fff !important;
-  opacity: 1 !important;
-  -webkit-text-fill-color: #fff;
 }
 
 .controlsContent {
@@ -360,12 +340,6 @@
   &.entrance {
     animation: badgeEnter 0.3s cubic-bezier(0.34, 1.2, 0.64, 1) 0.4s both;
   }
-}
-
-.toolbarContainer.collapsed .badge {
-  // NOTE: Position on the rounded-corner arc instead of the extreme corner for icon-like border alignment.
-  top: -3px;
-  right: -3px;
 }
 
 .controlButton {

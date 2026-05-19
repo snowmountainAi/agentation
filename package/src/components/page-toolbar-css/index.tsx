@@ -441,6 +441,7 @@ export function PageFeedbackToolbarCSS({
   const [showMarkers, setShowMarkers] = useState(true);
   const [isToolbarHidden, setIsToolbarHidden] = useState(() => loadToolbarHidden());
   const [isToolbarHiding, setIsToolbarHiding] = useState(false);
+  const hasSkippedInitialExternalModeNotificationRef = useRef(false);
 
   // Stop native events from bubbling past document.body when they originate
   // inside the toolbar portal. Without this, clicks on the toolbar propagate to
@@ -3456,6 +3457,12 @@ export function PageFeedbackToolbarCSS({
 
   useEffect(() => {
     if (!externalModeMessageType) return;
+    if (!hasSkippedInitialExternalModeNotificationRef.current) {
+      // NOTE: Parent shells may already know they are in comment mode while a remote iframe reloads.
+      // Emitting the default inactive state on mount would incorrectly switch the parent back to try mode.
+      hasSkippedInitialExternalModeNotificationRef.current = true;
+      return;
+    }
     try {
       window.parent?.postMessage(
         {

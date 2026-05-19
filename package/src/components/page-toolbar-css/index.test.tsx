@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import { PageFeedbackToolbarCSS } from "./index";
 import type { Annotation } from "../../types";
 
@@ -138,6 +138,22 @@ describe("PageFeedbackToolbarCSS", () => {
       expect(payload.output).toContain("Fix current page");
       expect(payload.output).toContain("## Page Feedback: /settings");
       expect(payload.output).toContain("Fix settings page");
+    });
+  });
+
+  describe("external mode", () => {
+    it("does not announce the default try mode on mount", async () => {
+      const postMessageSpy = vi.spyOn(window.parent, "postMessage");
+
+      await act(async () => {
+        render(<PageFeedbackToolbarCSS externalModeMessageType="agentation.mode" />);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(postMessageSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "agentation.mode.changed" }),
+        "*",
+      );
     });
   });
 });

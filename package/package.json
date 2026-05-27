@@ -1,6 +1,6 @@
 {
   "name": "agentation",
-  "version": "3.0.16-qwikbuild",
+  "version": "3.0.17-qwikbuild",
   "description": "Visual feedback for AI coding agents",
   "sideEffects": false,
   "license": "PolyForm-Shield-1.0.0",

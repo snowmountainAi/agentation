@@ -61,6 +61,10 @@ import {
   clearWireframeState,
   loadToolbarHidden,
   saveToolbarHidden,
+  clearAllStoredAnnotations,
+  removeAnnotationByIdAcrossPages,
+  ANNOTATION_CLEAR_MARKER_KEY,
+  ANNOTATION_BROADCAST_CHANNEL,
 } from "../../utils/storage";
 import {
   createSession as createSessionRaw,
@@ -887,16 +891,15 @@ export function PageFeedbackToolbarCSS({
             saveSessionId(pathname, session.id);
             sessionEstablished = true;
 
-            // Find local annotations that need to be synced:
-            // 1. Annotations never synced to any session
-            // 2. Annotations synced to a different session
-            // 3. Annotations marked as synced to THIS session but missing from server
-            //    (handles server-side deletion)
+            // Find local annotations that need to be synced.
+            // NOTE: Rows already marked as synced to this session must not be re-uploaded if
+            // Qwikbuild's webhook cleanup deleted them from the server after a successful submit.
             const allLocalAnnotations = loadAnnotations<Annotation>(pathname);
             const serverIds = new Set(session.annotations.map((a) => a.id));
             const localToMerge = allLocalAnnotations.filter((a) => {
               // If it exists on server, don't re-upload
               if (serverIds.has(a.id)) return false;
+              if ((a as Annotation & { _syncedTo?: string })._syncedTo === session.id) return false;
               // Otherwise, needs to be synced (whether never synced, synced elsewhere, or missing from server)
               return true;
             });
@@ -1213,7 +1216,11 @@ export function PageFeedbackToolbarCSS({
 
           // Find annotations that need syncing
           const serverIds = new Set(serverAnnotations.map((a) => a.id));
-          const unsyncedLocal = localAnnotations.filter((a) => !serverIds.has(a.id));
+          const unsyncedLocal = localAnnotations.filter((a) => {
+            if (serverIds.has(a.id)) return false;
+            if ((a as Annotation & { _syncedTo?: string })._syncedTo === sessionId) return false;
+            return true;
+          });
 
           if (unsyncedLocal.length > 0) {
             const results = await Promise.allSettled(
@@ -1349,8 +1356,16 @@ export function PageFeedbackToolbarCSS({
   useEffect(() => {
     if (mounted && annotations.length > 0) {
       if (currentSessionId) {
-        // Connected to session - save with sync marker to prevent re-upload on refresh
-        saveAnnotationsWithSyncMarker(pathname, annotations, currentSessionId);
+        // NOTE: Only mark rows that came back from the server (createdAt) or were already marked.
+        // Fresh local rows keep no marker so a failed async sync can retry on reopen.
+        saveAnnotations(
+          pathname,
+          annotations.map((annotation) => (
+            annotation.createdAt || annotation._syncedTo
+              ? { ...annotation, _syncedTo: currentSessionId }
+              : annotation
+          )),
+        );
       } else {
         // Not connected - save without markers (will sync when connected)
         saveAnnotations(pathname, annotations);
@@ -1359,6 +1374,39 @@ export function PageFeedbackToolbarCSS({
       localStorage.removeItem(getStorageKey(pathname));
     }
   }, [annotations, pathname, mounted, currentSessionId]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const clearLocalState = () => {
+      setAnnotations([]);
+      setAnimatedMarkers(new Set());
+      setExitingMarkers(new Set());
+      setDeletingMarkerId(null);
+      setEditingAnnotation(null);
+      setEditingTargetElement(null);
+      setEditingTargetElements([]);
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === ANNOTATION_CLEAR_MARKER_KEY) clearLocalState();
+    };
+    window.addEventListener("storage", onStorage);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(ANNOTATION_BROADCAST_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event.data?.type === "annotations.cleared") clearLocalState();
+      };
+    } catch {
+      channel = null;
+    }
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      channel?.close();
+    };
+  }, [mounted]);
 
   // Load design placements from localStorage on mount
   useEffect(() => {
@@ -2889,7 +2937,7 @@ export function PageFeedbackToolbarCSS({
         }
       }, 150);
     },
-    [annotations, editingAnnotation, onAnnotationDelete, fireWebhook, endpoint],
+    [annotations, editingAnnotation, onAnnotationDelete, fireWebhook, endpoint, deleteAnnotationFromServer],
   );
 
   // Handle marker hover - finds element(s) for live position tracking
@@ -3080,6 +3128,24 @@ export function PageFeedbackToolbarCSS({
 
     originalSetTimeout(() => setCleared(false), 1500);
   }, [pathname, annotations, drawStrokes, designPlacements, rearrangeState, blankCanvas, wireframePurpose, onAnnotationsClear, fireWebhook, endpoint]);
+
+  const clearPendingAfterSuccessfulSubmit = useCallback(
+    (submittedAnnotations: Annotation[]) => {
+      // NOTE: Qwikbuild deletes persisted server rows in the webhook background task; the iframe clears local state only so parent UI can close before unmount.
+      onAnnotationsClear?.(submittedAnnotations);
+      clearAllStoredAnnotations();
+      placementAnnotationMap.current.clear();
+      rearrangeAnnotationMap.current.clear();
+      setAnnotations([]);
+      setAnimatedMarkers(new Set());
+      setExitingMarkers(new Set());
+      setDeletingMarkerId(null);
+      setEditingAnnotation(null);
+      setEditingTargetElement(null);
+      setEditingTargetElements([]);
+    },
+    [onAnnotationsClear],
+  );
 
   // Copy output
   const copyOutput = useCallback(async () => {
@@ -3373,8 +3439,9 @@ export function PageFeedbackToolbarCSS({
   const sendToWebhook = useCallback(async (
     options: { includeAllPages?: boolean } = {},
   ): Promise<{ success: boolean; output?: string; reason?: string }> => {
+    const includeAllPages = options.includeAllPages === true;
     const { output, annotations: submittedAnnotations } = buildSubmitPayload(
-      options.includeAllPages === true,
+      includeAllPages,
     );
     if (!output) {
       return { success: false, reason: "no_content" };
@@ -3393,15 +3460,16 @@ export function PageFeedbackToolbarCSS({
 
     // Fire webhook and check result (force=true to bypass webhooksEnabled check for manual sends)
     const success = await fireWebhook("submit", { output, annotations: submittedAnnotations }, true);
+    if (success && includeAllPages) {
+      clearPendingAfterSuccessfulSubmit(submittedAnnotations);
+    } else if (success && settings.autoClearAfterCopy) {
+      originalSetTimeout(() => clearAll(), 500);
+    }
 
     // Show result
     setSendState(success ? "sent" : "failed");
     originalSetTimeout(() => setSendState("idle"), 2500);
 
-    // Clear annotations if send succeeded and autoClearAfterCopy is enabled
-    if (success && settings.autoClearAfterCopy) {
-      originalSetTimeout(() => clearAll(), 500);
-    }
     return { success, output };
   }, [
     onSubmit,
@@ -3409,6 +3477,7 @@ export function PageFeedbackToolbarCSS({
     buildSubmitPayload,
     settings.autoClearAfterCopy,
     clearAll,
+    clearPendingAfterSuccessfulSubmit,
   ]);
 
   useEffect(() => {
@@ -3437,6 +3506,94 @@ export function PageFeedbackToolbarCSS({
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [externalSubmitMessageType, sendToWebhook]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event?.data as { type?: string; requestId?: string } | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type !== "agentation.pending.snapshot") return;
+      const { annotations: pendingAnnotations, output } = buildSubmitPayload(true);
+      try {
+        window.parent?.postMessage(
+          {
+            type: "agentation.pending.snapshot.result",
+            requestId: data.requestId,
+            success: true,
+            pending_count: pendingAnnotations.length,
+            annotations: pendingAnnotations,
+            output,
+          },
+          "*",
+        );
+      } catch {
+        // noop
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [buildSubmitPayload]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event?.data as {
+        type?: string;
+        annotationId?: string;
+        requestId?: string;
+      } | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type !== "agentation.annotation.delete") return;
+      const annotationId = typeof data.annotationId === "string" ? data.annotationId : "";
+      if (!annotationId) {
+        window.parent?.postMessage(
+          {
+            type: "agentation.annotation.delete.result",
+            requestId: data.requestId,
+            annotationId,
+            success: false,
+            reason: "missing_annotation_id",
+          },
+          "*",
+        );
+        return;
+      }
+
+      try {
+        removeAnnotationByIdAcrossPages(annotationId);
+        if (annotations.some((annotation) => annotation.id === annotationId)) {
+          deleteAnnotation(annotationId);
+        } else if (endpoint) {
+          deleteAnnotationFromServer(endpoint, annotationId).catch((error) => {
+            console.warn(
+              "[Agentation] Failed to delete annotation from server:",
+              error,
+            );
+          });
+        }
+        window.parent?.postMessage(
+          {
+            type: "agentation.annotation.delete.result",
+            requestId: data.requestId,
+            annotationId,
+            success: true,
+          },
+          "*",
+        );
+      } catch (error) {
+        window.parent?.postMessage(
+          {
+            type: "agentation.annotation.delete.result",
+            requestId: data.requestId,
+            annotationId,
+            success: false,
+            reason: error instanceof Error ? error.message : "delete_failed",
+          },
+          "*",
+        );
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [annotations, deleteAnnotation, deleteAnnotationFromServer, endpoint]);
 
   useEffect(() => {
     if (!externalModeMessageType) return;

@@ -9,6 +9,8 @@
 import type { Annotation } from "../types";
 
 const STORAGE_PREFIX = "feedback-annotations-";
+export const ANNOTATION_CLEAR_MARKER_KEY = "agentation.annotations.lastClearedAt";
+export const ANNOTATION_BROADCAST_CHANNEL = "agentation-annotations";
 const DEFAULT_RETENTION_DAYS = 7;
 
 export function getStorageKey(pathname: string): string {
@@ -77,6 +79,77 @@ export function loadAllAnnotations<T = Annotation>(): Map<string, T[]> {
   }
 
   return result;
+}
+
+function getAnnotationStorageKeys(): string[] {
+  if (typeof window === "undefined") return [];
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(STORAGE_PREFIX)) keys.push(key);
+    }
+  } catch {
+    // ignore
+  }
+  return keys;
+}
+
+function writeAnnotationClearMarker(lastClearedAt = new Date().toISOString()): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(ANNOTATION_CLEAR_MARKER_KEY, lastClearedAt);
+  } catch {
+    // ignore
+  }
+  try {
+    const channel = new BroadcastChannel(ANNOTATION_BROADCAST_CHANNEL);
+    channel.postMessage({ type: "annotations.cleared", lastClearedAt });
+    channel.close();
+  } catch {
+    // BroadcastChannel is optional; storage events cover same-origin tabs.
+  }
+}
+
+export function clearAllStoredAnnotations(lastClearedAt = new Date().toISOString()): number {
+  if (typeof window === "undefined") return 0;
+  let cleared = 0;
+  for (const key of getAnnotationStorageKeys()) {
+    try {
+      if (localStorage.getItem(key) != null) {
+        localStorage.removeItem(key);
+        cleared += 1;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  writeAnnotationClearMarker(lastClearedAt);
+  return cleared;
+}
+
+export function removeAnnotationByIdAcrossPages(annotationId: string): number {
+  if (typeof window === "undefined") return 0;
+  let removed = 0;
+  for (const key of getAnnotationStorageKeys()) {
+    try {
+      const stored = localStorage.getItem(key);
+      if (!stored) continue;
+      const annotations = JSON.parse(stored) as Annotation[];
+      if (!Array.isArray(annotations)) continue;
+      const next = annotations.filter((annotation) => annotation.id !== annotationId);
+      if (next.length === annotations.length) continue;
+      removed += annotations.length - next.length;
+      if (next.length > 0) {
+        localStorage.setItem(key, JSON.stringify(next));
+      } else {
+        localStorage.removeItem(key);
+      }
+    } catch {
+      // ignore malformed entries
+    }
+  }
+  return removed;
 }
 
 // =============================================================================

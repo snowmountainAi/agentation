@@ -371,6 +371,8 @@ export type PageFeedbackToolbarCSSProps = {
   externalModeMessageType?: string;
   /** Whether to render Agentation's built-in toolbar. */
   showToolbar?: boolean;
+  /** Whether annotation popups include voice input. Defaults to true. */
+  enableVoiceInput?: boolean;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
 };
@@ -405,6 +407,7 @@ export function PageFeedbackToolbarCSS({
   showSendButton = true,
   externalModeMessageType = "agentation.mode",
   showToolbar = false,
+  enableVoiceInput = true,
   className: userClassName,
 }: PageFeedbackToolbarCSSProps = {}) {
   const endpointAuth: SyncAuthOptions = {
@@ -4963,18 +4966,20 @@ export function PageFeedbackToolbarCSS({
                           ? "var(--agentation-color-green)"
                           : "var(--agentation-color-accent)"
                       }
+                      enableVoiceInput={enableVoiceInput}
                       style={{
-                        // Popup is 280px wide, centered with translateX(-50%), so 140px each side
-                        // Clamp so popup stays 20px from viewport edges
+                        // NOTE: The 320px popup is centered with translateX(-50%);
+                        // clamp its 160px half-width plus a 20px viewport gutter.
                         left: Math.max(
-                          160,
+                          180,
                           Math.min(
-                            window.innerWidth - 160,
+                            window.innerWidth - 180,
                             (markerX / 100) * window.innerWidth,
                           ),
                         ),
                         // Position popup above or below marker to keep marker visible
-                        ...(markerY > window.innerHeight - 290
+                        // NOTE: Reserve the expanded recording row so starting the mic cannot push the popup offscreen.
+                        ...(markerY > window.innerHeight - 340
                           ? { bottom: window.innerHeight - markerY + 20 }
                           : { top: markerY + 20 }),
                       }}
@@ -5091,22 +5096,23 @@ export function PageFeedbackToolbarCSS({
                     ? "var(--agentation-color-green)"
                     : "var(--agentation-color-accent)"
                 }
+                enableVoiceInput={enableVoiceInput}
                 style={(() => {
                   const markerY = editingAnnotation.isFixed
                     ? editingAnnotation.y
                     : editingAnnotation.y - scrollY;
                   return {
-                    // Popup is 280px wide, centered with translateX(-50%), so 140px each side
-                    // Clamp so popup stays 20px from viewport edges
+                    // NOTE: Keep the widened popup inside the same 20px viewport gutter.
                     left: Math.max(
-                      160,
+                      180,
                       Math.min(
-                        window.innerWidth - 160,
+                        window.innerWidth - 180,
                         (editingAnnotation.x / 100) * window.innerWidth,
                       ),
                     ),
                     // Position popup above or below marker to keep marker visible
-                    ...(markerY > window.innerHeight - 290
+                    // NOTE: Reserve the expanded recording row so starting the mic cannot push the popup offscreen.
+                    ...(markerY > window.innerHeight - 340
                       ? { bottom: window.innerHeight - markerY + 20 }
                       : { top: markerY + 20 }),
                   };

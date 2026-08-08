@@ -1012,7 +1012,8 @@ export function RearrangeOverlay({ rearrangeState, onChange, isDarkMode, exiting
         const belowY = screenY + rect.height + 8;
         const fitsAbove = aboveY > 200;
         const fitsBelow = belowY < window.innerHeight - 100;
-        const popupLeft = Math.max(160, Math.min(window.innerWidth - 160, centerX));
+        // NOTE: Match AnnotationPopupCSS's 320px width plus its 20px viewport gutter.
+        const popupLeft = Math.max(180, Math.min(window.innerWidth - 180, centerX));
         let popupStyle: React.CSSProperties;
         if (fitsAbove) {
           popupStyle = { left: popupLeft, bottom: window.innerHeight - aboveY };

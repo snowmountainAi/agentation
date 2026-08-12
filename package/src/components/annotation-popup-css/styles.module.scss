@@ -457,7 +457,8 @@
 }
 
 .deleteButton,
-.voiceButton {
+.voiceButton,
+.screenshotButton {
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -503,6 +504,20 @@
   &.loading {
     background: rgba(255, 255, 255, 0.1);
     color: rgba(255, 255, 255, 0.9);
+  }
+}
+
+.screenshotButton {
+  color: rgba(255, 255, 255, 0.62);
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  &.enabled {
+    background: color-mix(in srgb, currentColor 16%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
   }
 }
 
@@ -609,6 +624,20 @@
     &.loading {
       background: rgba(0, 0, 0, 0.07);
       color: rgba(0, 0, 0, 0.82);
+    }
+  }
+
+  .screenshotButton {
+    color: rgba(0, 0, 0, 0.56);
+
+    &:hover:not(:disabled) {
+      background: rgba(0, 0, 0, 0.07);
+      color: rgba(0, 0, 0, 0.82);
+    }
+
+    &.enabled {
+      background: color-mix(in srgb, currentColor 12%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 26%, transparent);
     }
   }
 

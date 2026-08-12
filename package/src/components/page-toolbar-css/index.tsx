@@ -72,6 +72,7 @@ import {
   syncAnnotation as syncAnnotationRaw,
   updateAnnotation as updateAnnotationOnServerRaw,
   deleteAnnotation as deleteAnnotationFromServerRaw,
+  type AnnotationUpdate,
   type SyncAuthOptions,
 } from "../../utils/sync";
 import { getReactComponentName } from "../../utils/react-detection";
@@ -480,7 +481,7 @@ export function PageFeedbackToolbarCSS({
     (
       targetEndpoint: string,
       annotationId: string,
-      data: Partial<Annotation>,
+      data: AnnotationUpdate,
     ) => updateAnnotationOnServerRaw(targetEndpoint, annotationId, data, endpointAuth),
     [endpointAuthHeaderName, endpointAuthToken],
   );
@@ -2887,7 +2888,7 @@ export function PageFeedbackToolbarCSS({
 
   // Add annotation
   const addAnnotation = useCallback(
-    (comment: string) => {
+    (comment: string, { includeScreenshot }: { includeScreenshot: boolean }) => {
       if (!pendingAnnotation) return;
 
       const newAnnotation: Annotation = {
@@ -2925,7 +2926,7 @@ export function PageFeedbackToolbarCSS({
       };
       const boundingBox = pendingAnnotation.boundingBox;
       const screenshotCapture =
-        boundingBox && trustedScreenshotParentOrigin
+        includeScreenshot && boundingBox && trustedScreenshotParentOrigin
           ? captureDomRegion(
               boundingBox.x,
               pendingAnnotation.isFixed
@@ -3155,10 +3156,26 @@ export function PageFeedbackToolbarCSS({
 
   // Update annotation (edit mode submit)
   const updateAnnotation = useCallback(
-    (newComment: string) => {
+    (newComment: string, { includeScreenshot }: { includeScreenshot: boolean }) => {
       if (!editingAnnotation) return;
 
-      const updatedAnnotation = { ...editingAnnotation, comment: newComment };
+      const hadScreenshot = Boolean(editingAnnotation.screenshot);
+      const boundingBox = editingAnnotation.boundingBox;
+      const screenshotCapture =
+        includeScreenshot && !hadScreenshot && boundingBox && trustedScreenshotParentOrigin
+          ? captureDomRegion(
+              boundingBox.x,
+              editingAnnotation.isFixed
+                ? boundingBox.y
+                : boundingBox.y - window.scrollY,
+              boundingBox.width,
+              boundingBox.height,
+              [],
+            )
+          : Promise.resolve(null);
+      const updatedAnnotation: Annotation = includeScreenshot
+        ? { ...editingAnnotation, comment: newComment }
+        : { ...editingAnnotation, comment: newComment, screenshot: undefined };
 
       setAnnotations((prev) =>
         prev.map((a) =>
@@ -3172,14 +3189,43 @@ export function PageFeedbackToolbarCSS({
 
       // Sync update to server (non-blocking)
       if (endpoint) {
+        // NOTE: Explicit null distinguishes removing an existing screenshot from an omitted field,
+        // which preserves it during ordinary partial annotation updates.
         updateAnnotationOnServer(endpoint, editingAnnotation.id, {
           comment: newComment,
+          ...(!includeScreenshot ? { screenshot: null } : {}),
         }).catch((error) => {
           console.warn(
             "[Agentation] Failed to update annotation on server:",
             error,
           );
         });
+      }
+
+      // NOTE: Existing screenshots remain immutable; capture only when editing turns the toggle on
+      // for an annotation that did not already have one.
+      if (includeScreenshot && !hadScreenshot) {
+        void (async () => {
+          const capture = await screenshotCapture;
+          if (!capture) return;
+          const screenshot = await uploadCapturedScreenshot(editingAnnotation.id, capture);
+          if (!screenshot) return;
+
+          setAnnotations((prev) =>
+            prev.map((annotation) =>
+              annotation.id === editingAnnotation.id
+                ? { ...annotation, screenshot }
+                : annotation,
+            ),
+          );
+          if (endpoint) {
+            try {
+              await updateAnnotationOnServer(endpoint, editingAnnotation.id, { screenshot });
+            } catch (error) {
+              console.warn("[Agentation] Failed to sync edited annotation screenshot:", error);
+            }
+          }
+        })();
       }
 
       // Animate out the edit popup
@@ -3191,7 +3237,15 @@ export function PageFeedbackToolbarCSS({
         setEditExiting(false);
       }, 150);
     },
-    [editingAnnotation, onAnnotationUpdate, fireWebhook, endpoint],
+    [
+      editingAnnotation,
+      onAnnotationUpdate,
+      fireWebhook,
+      endpoint,
+      trustedScreenshotParentOrigin,
+      updateAnnotationOnServer,
+      uploadCapturedScreenshot,
+    ],
   );
 
   // Cancel editing with exit animation
@@ -3589,10 +3643,7 @@ export function PageFeedbackToolbarCSS({
 
   // Send to webhook
   const sendToWebhook = useCallback(async (
-    options: {
-      includeAllPages?: boolean;
-      includedScreenshotAnnotationIds?: string[];
-    } = {},
+    options: { includeAllPages?: boolean } = {},
   ): Promise<{ success: boolean; output?: string; reason?: string }> => {
     const includeAllPages = options.includeAllPages === true;
     const { output, annotations } = buildSubmitPayload(
@@ -3601,16 +3652,9 @@ export function PageFeedbackToolbarCSS({
     if (!output) {
       return { success: false, reason: "no_content" };
     }
-    const includedScreenshotIds = options.includedScreenshotAnnotationIds
-      ? new Set(options.includedScreenshotAnnotationIds)
-      : null;
-    // NOTE: Screenshot inclusion is a submit-time choice. Strip only the image
-    // reference from copies so comment text and cleanup IDs retain their semantics.
-    const submittedAnnotations = annotations.map((annotation) =>
-      annotation.screenshot && includedScreenshotIds && !includedScreenshotIds.has(annotation.id)
-        ? { ...annotation, screenshot: undefined }
-        : annotation,
-    );
+    // NOTE: Screenshot consent is captured when the annotation is created. If metadata exists here,
+    // the user opted in at capture time, so later submission paths must preserve it consistently.
+    const submittedAnnotations = annotations;
 
     // Fire onSubmit callback
     if (onSubmit) {
@@ -3656,20 +3700,11 @@ export function PageFeedbackToolbarCSS({
       if (event.source !== window.parent || event.origin !== parentOrigin) return;
       const data = event?.data as {
         type?: string;
-        includedScreenshotAnnotationIds?: unknown;
       } | null;
       if (!data || typeof data !== "object") return;
       if (data.type !== externalSubmitMessageType) return;
-      const includedScreenshotAnnotationIds = Array.isArray(
-        data.includedScreenshotAnnotationIds,
-      )
-        ? data.includedScreenshotAnnotationIds.filter(
-            (id): id is string => typeof id === "string",
-          )
-        : undefined;
       void sendToWebhook({
         includeAllPages: true,
-        includedScreenshotAnnotationIds,
       }).then((result) => {
         try {
           window.parent?.postMessage(
@@ -5147,6 +5182,7 @@ export function PageFeedbackToolbarCSS({
                           : "var(--agentation-color-accent)"
                       }
                       enableVoiceInput={enableVoiceInput}
+                      enableScreenshotInput={Boolean(trustedScreenshotParentOrigin)}
                       style={{
                         // NOTE: The 320px popup is centered with translateX(-50%);
                         // clamp its 160px half-width plus a 20px viewport gutter.
@@ -5257,6 +5293,7 @@ export function PageFeedbackToolbarCSS({
                   })()}
 
               <AnnotationPopupCSS
+                key={editingAnnotation.id}
                 ref={editPopupRef}
                 element={editingAnnotation.element}
                 selectedText={editingAnnotation.selectedText}
@@ -5277,6 +5314,8 @@ export function PageFeedbackToolbarCSS({
                     : "var(--agentation-color-accent)"
                 }
                 enableVoiceInput={enableVoiceInput}
+                enableScreenshotInput={Boolean(trustedScreenshotParentOrigin)}
+                initialIncludeScreenshot={Boolean(editingAnnotation.screenshot)}
                 style={(() => {
                   const markerY = editingAnnotation.isFixed
                     ? editingAnnotation.y

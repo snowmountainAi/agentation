@@ -25,7 +25,7 @@ import {
   getEventsSince,
 } from "./store.js";
 import { eventBus } from "./events.js";
-import type { Annotation, AFSEvent, ActionRequest } from "../types.js";
+import type { Annotation, AnnotationUpdate, AFSEvent, ActionRequest } from "../types.js";
 
 /**
  * Log to stderr so diagnostic output never corrupts the MCP stdio channel.
@@ -384,7 +384,7 @@ const addAnnotationHandler: RouteHandler = async (req, res, params) => {
  */
 const updateAnnotationHandler: RouteHandler = async (req, res, params) => {
   try {
-    const body = await parseBody<Partial<Annotation>>(req);
+    const body = await parseBody<AnnotationUpdate>(req);
 
     // Check if annotation exists
     const existing = getAnnotation(params.id);

@@ -62,6 +62,7 @@ export type { TenantStore } from "./server/tenant-store.js";
 // Re-export types
 export type {
   Annotation,
+  AnnotationUpdate,
   AnnotationIntent,
   AnnotationSeverity,
   AnnotationStatus,

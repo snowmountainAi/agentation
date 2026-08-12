@@ -64,6 +64,72 @@ describe("AnnotationPopupCSS voice input", () => {
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).rows).toBe(5);
   });
 
+  it("opts into a screenshot only when the camera is enabled before Add", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AnnotationPopupCSS
+        element="Button"
+        initialValue="Increase contrast"
+        enableVoiceInput
+        enableScreenshotInput
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const camera = screen.getByRole("button", { name: "Include screenshot with this comment" });
+    expect(camera.getAttribute("aria-pressed")).toBe("false");
+    expect(camera.getAttribute("title")).toContain("Include a screenshot");
+
+    fireEvent.click(camera);
+    const enabledCamera = screen.getByRole("button", { name: "Remove screenshot from this comment" });
+    expect(enabledCamera.getAttribute("aria-pressed")).toBe("true");
+    expect(enabledCamera.getAttribute("title")).toContain("Screenshot enabled");
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("Increase contrast", { includeScreenshot: true });
+  });
+
+  it("submits without a screenshot when the camera remains disabled", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AnnotationPopupCSS
+        element="Button"
+        initialValue="Increase contrast"
+        enableScreenshotInput
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("Increase contrast", { includeScreenshot: false });
+  });
+
+  it("starts enabled for an existing screenshot and lets editing remove it", () => {
+    const onSubmit = vi.fn();
+    render(
+      <AnnotationPopupCSS
+        element="Button"
+        initialValue="Increase contrast"
+        enableScreenshotInput
+        initialIncludeScreenshot
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const enabledCamera = screen.getByRole("button", { name: "Remove screenshot from this comment" });
+    expect(enabledCamera.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(enabledCamera);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("Increase contrast", { includeScreenshot: false });
+  });
+
   it("reports microphone permission denial without leaving a busy state", async () => {
     vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(
       new DOMException("Denied", "NotAllowedError"),

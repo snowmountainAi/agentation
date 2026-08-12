@@ -16,6 +16,7 @@ import type {
   SessionStatus,
   SessionWithAnnotations,
   Annotation,
+  AnnotationUpdate,
   AnnotationStatus,
   ThreadMessage,
   Organization,
@@ -296,7 +297,10 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         thread = COALESCE(@thread, thread),
         intent = COALESCE(@intent, intent),
         severity = COALESCE(@severity, severity),
-        screenshot = COALESCE(@screenshot, screenshot)
+        screenshot = CASE
+          WHEN @clearScreenshot = 1 THEN NULL
+          ELSE COALESCE(@screenshot, screenshot)
+        END
       WHERE id = @id
     `),
 
@@ -462,7 +466,7 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
 
     updateAnnotation(
       id: string,
-      data: Partial<Omit<Annotation, "id" | "sessionId" | "createdAt">>
+      data: AnnotationUpdate
     ): Annotation | undefined {
       const existing = this.getAnnotation(id);
       if (!existing) return undefined;
@@ -478,6 +482,7 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         intent: data.intent ?? null,
         severity: data.severity ?? null,
         screenshot: data.screenshot ? JSON.stringify(data.screenshot) : null,
+        clearScreenshot: data.screenshot === null ? 1 : 0,
       });
 
       const updated = this.getAnnotation(id);

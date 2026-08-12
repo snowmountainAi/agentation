@@ -16,6 +16,7 @@ import type {
   SessionStatus,
   SessionWithAnnotations,
   Annotation,
+  AnnotationUpdate,
   AnnotationStatus,
   ThreadMessage,
 } from "../types.js";
@@ -155,12 +156,17 @@ function createMemoryStore(): AFSStore {
 
     updateAnnotation(
       id: string,
-      data: Partial<Omit<Annotation, "id" | "sessionId" | "createdAt">>
+      data: AnnotationUpdate
     ): Annotation | undefined {
       const annotation = annotations.get(id);
       if (!annotation) return undefined;
 
-      Object.assign(annotation, data, { updatedAt: new Date().toISOString() });
+      const { screenshot, ...fields } = data;
+      Object.assign(annotation, fields, { updatedAt: new Date().toISOString() });
+      // NOTE: Null is an explicit unlink command; undefined continues to mean "leave unchanged"
+      // so partial updates cannot accidentally restore or remove screenshot consent.
+      if (screenshot === null) delete annotation.screenshot;
+      else if (screenshot !== undefined) annotation.screenshot = screenshot;
 
       if (annotation.sessionId) {
         const event = eventBus.emit("annotation.updated", annotation.sessionId, annotation);
@@ -307,7 +313,7 @@ export function getAnnotation(id: string): Annotation | undefined {
 
 export function updateAnnotation(
   id: string,
-  data: Partial<Omit<Annotation, "id" | "sessionId" | "createdAt">>
+  data: AnnotationUpdate
 ): Annotation | undefined {
   return getStore().updateAnnotation(id, data);
 }

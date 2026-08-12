@@ -1,12 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, fireEvent, waitFor, act, screen } from "@testing-library/react";
 import { PageFeedbackToolbarCSS } from "./index";
 import type { Annotation } from "../../types";
+
+const captureDomRegionMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../utils/screenshot", () => ({
+  captureDomRegion: captureDomRegionMock,
+}));
 
 // Mock clipboard API
 const mockClipboard = {
   writeText: vi.fn().mockResolvedValue(undefined),
 };
+const originalParentWindow = window.parent;
 
 beforeEach(() => {
   localStorage.clear();
@@ -16,10 +23,28 @@ beforeEach(() => {
   });
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
   mockClipboard.writeText.mockClear();
+  captureDomRegionMock.mockReset();
+  captureDomRegionMock.mockResolvedValue({
+    blob: new Blob(["image"], { type: "image/jpeg" }),
+    width: 214,
+    height: 104,
+  });
+  Object.defineProperty(document, "elementFromPoint", {
+    configurable: true,
+    value: vi.fn(() => document.body),
+  });
+  Object.defineProperty(Blob.prototype, "arrayBuffer", {
+    configurable: true,
+    value: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),
+  });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  Object.defineProperty(window, "parent", {
+    configurable: true,
+    value: originalParentWindow,
+  });
   Object.defineProperty(document, "referrer", {
     configurable: true,
     value: "",
@@ -151,7 +176,6 @@ describe("PageFeedbackToolbarCSS", () => {
         new MessageEvent("message", {
           data: {
             type: "agentation.submit",
-            includedScreenshotAnnotationIds: ["current-page"],
           },
           origin: "http://localhost:5174",
           source: window,
@@ -175,12 +199,109 @@ describe("PageFeedbackToolbarCSS", () => {
       ).toBe("current.jpg");
       expect(
         payload.annotations.find((annotation: { id: string }) => annotation.id === "settings-page")
-          ?.screenshot,
-      ).toBeUndefined();
+          ?.screenshot?.name,
+      ).toBe("settings.jpg");
       expect(payload.output).toContain("## Page Feedback: /");
       expect(payload.output).toContain("Fix current page");
       expect(payload.output).toContain("## Page Feedback: /settings");
       expect(payload.output).toContain("Fix settings page");
+    });
+  });
+
+  describe("editing screenshot consent", () => {
+    it("captures and submits a screenshot when editing turns the camera on", async () => {
+      Object.defineProperty(document, "referrer", {
+        configurable: true,
+        value: "http://localhost:5174/projects/demo",
+      });
+      localStorage.setItem(
+        "feedback-annotations-/",
+        JSON.stringify([{
+          id: "edit-with-camera",
+          x: 25,
+          y: 100,
+          comment: "Capture this state",
+          element: "Button",
+          elementPath: "body > button",
+          boundingBox: { x: 100, y: 200, width: 150, height: 40 },
+          timestamp: Date.now(),
+          status: "pending",
+        }]),
+      );
+      const parentPostMessage = vi.fn();
+      const parentWindow = { postMessage: parentPostMessage } as unknown as Window;
+      Object.defineProperty(window, "parent", {
+        configurable: true,
+        value: parentWindow,
+      });
+      render(
+        <PageFeedbackToolbarCSS
+          webhookUrl="https://example.test/agentation-webhook"
+          externalSubmitMessageType="agentation.submit"
+          screenshotUploadParentOrigin="http://localhost:5174"
+        />,
+      );
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", {
+          data: { type: "agentation.mode", mode: "feedback" },
+        }));
+        await Promise.resolve();
+      });
+
+      const marker = await waitFor(() => {
+        const element = document.querySelector<HTMLElement>("[data-annotation-marker]");
+        expect(element).toBeTruthy();
+        return element!;
+      });
+      fireEvent.click(marker);
+      fireEvent.click(await screen.findByRole("button", { name: "Include screenshot with this comment" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(captureDomRegionMock).toHaveBeenCalled());
+      await waitFor(() => expect(parentPostMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "agentation.screenshot.upload.request" }),
+        "http://localhost:5174",
+        expect.any(Array),
+      ));
+      const uploadRequest = parentPostMessage.mock.calls.find(
+        ([message]) => message?.type === "agentation.screenshot.upload.request",
+      )?.[0] as { requestId: string };
+
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", {
+          source: parentWindow,
+          origin: "http://localhost:5174",
+          data: {
+            type: "agentation.screenshot.upload.result",
+            requestId: uploadRequest.requestId,
+            success: true,
+            screenshot: {
+              key: "visual/edited.jpg",
+              name: "edited.jpg",
+              contentType: "image/jpeg",
+              size: 100,
+              width: 214,
+              height: 104,
+              capturedAt: new Date().toISOString(),
+            },
+          },
+        }));
+        await Promise.resolve();
+      });
+      window.dispatchEvent(new MessageEvent("message", {
+        source: parentWindow,
+        origin: "http://localhost:5174",
+        data: { type: "agentation.submit" },
+      }));
+
+      await waitFor(() => {
+        const webhookCall = vi.mocked(fetch).mock.calls.find(
+          ([url]) => url === "https://example.test/agentation-webhook",
+        );
+        expect(webhookCall).toBeTruthy();
+        const payload = JSON.parse(String(webhookCall?.[1]?.body));
+        expect(payload.annotations[0].screenshot?.name).toBe("edited.jpg");
+      });
     });
   });
 

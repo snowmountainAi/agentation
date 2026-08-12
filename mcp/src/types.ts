@@ -68,6 +68,12 @@ export type AnnotationScreenshot = {
   capturedAt: string;
 };
 
+export type AnnotationUpdate = Partial<
+  Omit<Annotation, "id" | "sessionId" | "createdAt" | "screenshot">
+> & {
+  screenshot?: AnnotationScreenshot | null;
+};
+
 // -----------------------------------------------------------------------------
 // Annotation Enums
 // -----------------------------------------------------------------------------
@@ -200,7 +206,7 @@ export interface AFSStore {
   getAnnotation(id: string): Annotation | undefined;
   updateAnnotation(
     id: string,
-    data: Partial<Omit<Annotation, "id" | "sessionId" | "createdAt">>
+    data: AnnotationUpdate
   ): Annotation | undefined;
   updateAnnotationStatus(
     id: string,

@@ -73,8 +73,8 @@ export interface AnnotationPopupCSSProps {
   initialValue?: string;
   /** Label for submit button (default: "Add") */
   submitLabel?: string;
-  /** Called when annotation is submitted with text */
-  onSubmit: (text: string) => void;
+  /** Called when annotation is submitted with text and optional screenshot intent. */
+  onSubmit: (text: string, options: { includeScreenshot: boolean }) => void;
   /** Called when popup is cancelled/dismissed */
   onCancel: () => void;
   /** Called when delete button is clicked (only shown if provided) */
@@ -91,6 +91,10 @@ export interface AnnotationPopupCSSProps {
   computedStyles?: Record<string, string>;
   /** Show browser microphone recording and parent-frame transcription bridge. */
   enableVoiceInput?: boolean;
+  /** Show a screenshot toggle for the annotation. */
+  enableScreenshotInput?: boolean;
+  /** Initial screenshot toggle state, used when editing an annotation. */
+  initialIncludeScreenshot?: boolean;
 }
 
 export interface AnnotationPopupCSSHandle {
@@ -120,6 +124,8 @@ export const AnnotationPopupCSS = forwardRef<AnnotationPopupCSSHandle, Annotatio
       lightMode = false,
       computedStyles,
       enableVoiceInput = false,
+      enableScreenshotInput = false,
+      initialIncludeScreenshot = false,
     },
     ref
   ) {
@@ -131,6 +137,7 @@ export const AnnotationPopupCSS = forwardRef<AnnotationPopupCSSHandle, Annotatio
     const [voiceState, setVoiceState] = useState<VoiceState>("idle");
     const [voiceError, setVoiceError] = useState("");
     const [recordingSeconds, setRecordingSeconds] = useState(0);
+    const [includeScreenshot, setIncludeScreenshot] = useState(initialIncludeScreenshot);
     const textRef = useRef(initialValue);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const popupRef = useRef<HTMLDivElement>(null);
@@ -559,8 +566,8 @@ export const AnnotationPopupCSS = forwardRef<AnnotationPopupCSSHandle, Annotatio
     // Handle submit
     const handleSubmit = useCallback(() => {
       if (!text.trim() || isVoiceBusy) return;
-      onSubmit(text.trim());
-    }, [isVoiceBusy, text, onSubmit]);
+      onSubmit(text.trim(), { includeScreenshot });
+    }, [includeScreenshot, isVoiceBusy, text, onSubmit]);
 
     const syncTextareaSelection = useCallback((textarea: HTMLTextAreaElement) => {
       selectionRef.current = {
@@ -727,7 +734,7 @@ export const AnnotationPopupCSS = forwardRef<AnnotationPopupCSSHandle, Annotatio
         )}
 
         <div className={styles.actions}>
-          {(onDelete || enableVoiceInput) && (
+          {(onDelete || enableVoiceInput || enableScreenshotInput) && (
             <div className={styles.leftActions}>
               {onDelete && (
                 <button
@@ -757,6 +764,23 @@ export const AnnotationPopupCSS = forwardRef<AnnotationPopupCSSHandle, Annotatio
                       <path d="M5.5 11.5v.5a6.5 6.5 0 0 0 13 0v-.5M12 18.5V22M9.5 22h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                     </svg>
                   )}
+                </button>
+              )}
+              {enableScreenshotInput && voiceState !== "recording" && (
+                <button
+                  className={`${styles.screenshotButton} ${includeScreenshot ? styles.enabled : ""}`}
+                  onClick={() => setIncludeScreenshot((current) => !current)}
+                  type="button"
+                  disabled={isVoiceBusy}
+                  aria-label={includeScreenshot ? "Remove screenshot from this comment" : "Include screenshot with this comment"}
+                  aria-pressed={includeScreenshot}
+                  title={includeScreenshot ? "Screenshot enabled — click to exclude it" : "Include a screenshot of the selected area"}
+                  style={includeScreenshot ? { color: accentColor } : undefined}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M14.5 5 13 3h-2L9.5 5H6.75A2.75 2.75 0 0 0 4 7.75v8.5A2.75 2.75 0 0 0 6.75 19h10.5A2.75 2.75 0 0 0 20 16.25v-8.5A2.75 2.75 0 0 0 17.25 5H14.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                    <circle cx="12" cy="12" r="3.25" stroke="currentColor" strokeWidth="1.8" />
+                  </svg>
                 </button>
               )}
               {voiceState === "transcribing" && (

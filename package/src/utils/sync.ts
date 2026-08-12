@@ -7,7 +7,11 @@
 // Falls back gracefully to local-only mode on network errors.
 //
 
-import type { Annotation, Session, SessionWithAnnotations } from "../types";
+import type { Annotation, AnnotationScreenshot, Session, SessionWithAnnotations } from "../types";
+
+export type AnnotationUpdate = Omit<Partial<Annotation>, "screenshot"> & {
+  screenshot?: AnnotationScreenshot | null;
+};
 
 export type SyncAuthOptions = {
   authToken?: string;
@@ -111,7 +115,7 @@ export async function syncAnnotation(
 export async function updateAnnotation(
   endpoint: string,
   annotationId: string,
-  data: Partial<Annotation>,
+  data: AnnotationUpdate,
   auth?: SyncAuthOptions,
 ): Promise<Annotation> {
   const response = await fetch(`${endpoint}/annotations/${annotationId}`, {

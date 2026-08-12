@@ -778,7 +778,7 @@ export const AnnotationPopupCSS = forwardRef<AnnotationPopupCSSHandle, Annotatio
                   style={includeScreenshot ? { color: accentColor } : undefined}
                 >
                   <svg className={styles.screenshotIcon} width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M14.75 5.5 13.25 2.75h-2.5L9.25 5.5H6.5a3.25 3.25 0 0 0-3.25 3.25v9A3.25 3.25 0 0 0 6.5 21h11a3.25 3.25 0 0 0 3.25-3.25v-9A3.25 3.25 0 0 0 17.5 5.5h-2.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M16.75 5.5 14.5 2.75h-5L7.25 5.5H6.5a3.25 3.25 0 0 0-3.25 3.25v9A3.25 3.25 0 0 0 6.5 21h11a3.25 3.25 0 0 0 3.25-3.25v-9A3.25 3.25 0 0 0 17.5 5.5h-.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                     <circle cx="12" cy="13.25" r="3.5" stroke="currentColor" strokeWidth="1.8" />
                   </svg>
                 </button>

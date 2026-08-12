@@ -20,6 +20,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  Object.defineProperty(document, "referrer", {
+    configurable: true,
+    value: "",
+  });
 });
 
 describe("PageFeedbackToolbarCSS", () => {
@@ -83,6 +87,10 @@ describe("PageFeedbackToolbarCSS", () => {
 
   describe("external submit", () => {
     it("sends pending annotations from all stored pages in submit format", async () => {
+      Object.defineProperty(document, "referrer", {
+        configurable: true,
+        value: "http://localhost:5174/projects/demo",
+      });
       localStorage.setItem(
         "feedback-annotations-/",
         JSON.stringify([
@@ -93,6 +101,15 @@ describe("PageFeedbackToolbarCSS", () => {
             comment: "Fix current page",
             element: "Button",
             elementPath: "body > button",
+            screenshot: {
+              key: "user/visual-feedback/project/current/image.jpg",
+              name: "current.jpg",
+              contentType: "image/jpeg",
+              size: 100,
+              width: 150,
+              height: 40,
+              capturedAt: new Date().toISOString(),
+            },
             timestamp: Date.now(),
             status: "pending",
           },
@@ -108,6 +125,15 @@ describe("PageFeedbackToolbarCSS", () => {
             comment: "Fix settings page",
             element: "Input",
             elementPath: "body > form > input",
+            screenshot: {
+              key: "user/visual-feedback/project/settings/image.jpg",
+              name: "settings.jpg",
+              contentType: "image/jpeg",
+              size: 100,
+              width: 150,
+              height: 40,
+              capturedAt: new Date().toISOString(),
+            },
             timestamp: Date.now(),
             status: "pending",
           },
@@ -121,7 +147,16 @@ describe("PageFeedbackToolbarCSS", () => {
         />,
       );
 
-      window.postMessage({ type: "agentation.submit" }, "*");
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            type: "agentation.submit",
+            includedScreenshotAnnotationIds: ["current-page"],
+          },
+          origin: "http://localhost:5174",
+          source: window,
+        }),
+      );
 
       await waitFor(() => {
         expect(fetch).toHaveBeenCalledWith(
@@ -134,6 +169,14 @@ describe("PageFeedbackToolbarCSS", () => {
       const payload = JSON.parse(request.body);
       expect(payload.event).toBe("submit");
       expect(payload.annotations).toHaveLength(2);
+      expect(
+        payload.annotations.find((annotation: { id: string }) => annotation.id === "current-page")
+          ?.screenshot?.name,
+      ).toBe("current.jpg");
+      expect(
+        payload.annotations.find((annotation: { id: string }) => annotation.id === "settings-page")
+          ?.screenshot,
+      ).toBeUndefined();
       expect(payload.output).toContain("## Page Feedback: /");
       expect(payload.output).toContain("Fix current page");
       expect(payload.output).toContain("## Page Feedback: /settings");

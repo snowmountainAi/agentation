@@ -4,16 +4,19 @@
 //
 // Captures a DOM region with drawing strokes composited on top.
 //
-// Uses `modern-screenshot` (optional peer dep) for DOM-to-image capture.
-// If not installed, falls back to stroke-only canvas capture.
-//
+// Uses modern-screenshot for DOM-to-image capture. If it is unavailable,
+// callers can fall back to the stroke-only canvas capture below.
 
-// Cache the import result so we only try once
-let _domCaptureModule: {
-  domToCanvas: (node: Node, options?: Record<string, unknown>) => Promise<HTMLCanvasElement>;
-} | null | undefined; // null = tried and failed, undefined = not tried yet
+type ModernScreenshotModule = {
+  domToCanvas: (
+    node: Node,
+    options?: Record<string, unknown>,
+  ) => Promise<HTMLCanvasElement>;
+};
 
-async function getDomCapture() {
+let _domCaptureModule: ModernScreenshotModule | null | undefined;
+
+async function getDomCapture(): Promise<ModernScreenshotModule | null> {
   if (_domCaptureModule !== undefined) return _domCaptureModule;
   try {
     _domCaptureModule = await import("modern-screenshot");
@@ -24,70 +27,127 @@ async function getDomCapture() {
   }
 }
 
-/**
- * Check whether DOM capture is available (modern-screenshot is installed).
- * Returns a cached result after the first check.
- */
 export async function isDomCaptureAvailable(): Promise<boolean> {
   return (await getDomCapture()) !== null;
 }
 
+export type CapturedDomRegion = {
+  blob: Blob;
+  width: number;
+  height: number;
+};
 
-// ---------------------------------------------------------------------------
-// Find capture target element
-// ---------------------------------------------------------------------------
+type CaptureRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function getCaptureRegion(
+  regionX: number,
+  regionY: number,
+  regionW: number,
+  regionH: number,
+  padding: number,
+): CaptureRegion | null {
+  const viewportW = document.documentElement.clientWidth || window.innerWidth;
+  const viewportH = document.documentElement.clientHeight || window.innerHeight;
+  const left = Math.max(0, regionX - padding);
+  const top = Math.max(0, regionY - padding);
+  const right = Math.min(viewportW, regionX + regionW + padding);
+  const bottom = Math.min(viewportH, regionY + regionH + padding);
+  if (right <= left || bottom <= top) return null;
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function isTransparentBackgroundColor(value: string): boolean {
+  const normalized = value.replace(/\s+/g, "").toLowerCase();
+  return (
+    !normalized ||
+    normalized === "transparent" ||
+    normalized === "rgba(0,0,0,0)" ||
+    /rgba\([^)]*,0(?:\.0+)?\)/.test(normalized)
+  );
+}
+
+function hasPaintedBackground(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element);
+  const before = window.getComputedStyle(element, "::before");
+  const after = window.getComputedStyle(element, "::after");
+  return (
+    !isTransparentBackgroundColor(style.backgroundColor) ||
+    style.backgroundImage !== "none" ||
+    before.backgroundImage !== "none" ||
+    after.backgroundImage !== "none" ||
+    style.backdropFilter !== "none" ||
+    style.filter !== "none"
+  );
+}
+
+function coversCaptureRegion(
+  element: HTMLElement,
+  capture: CaptureRegion,
+): boolean {
+  if (element === document.body || element === document.documentElement) return true;
+  const rect = element.getBoundingClientRect();
+  return (
+    rect.left <= capture.x &&
+    rect.top <= capture.y &&
+    rect.right >= capture.x + capture.width &&
+    rect.bottom >= capture.y + capture.height
+  );
+}
 
 /**
- * Find the smallest DOM element that covers a given viewport region.
- * Uses elementsFromPoint to get all elements at the region center,
- * then picks the smallest one that fully contains the capture area.
+ * Use the nearest painted ancestor that fully covers the crop. Transparent text
+ * and foreground nodes otherwise render against white because their inherited
+ * ancestor paint is absent from the cloned subtree.
  */
-function findCaptureTarget(
-  captureX: number,
-  captureY: number,
-  captureW: number,
-  captureH: number,
-): HTMLElement {
-  const cx = captureX + captureW / 2;
-  const cy = captureY + captureH / 2;
+function findCaptureTarget(capture: CaptureRegion): HTMLElement {
+  const centerX = Math.min(window.innerWidth - 1, capture.x + capture.width / 2);
+  const centerY = Math.min(window.innerHeight - 1, capture.y + capture.height / 2);
+  const hit = document
+    .elementsFromPoint(centerX, centerY)
+    .find(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement &&
+        !element.closest("[data-agentation-root]") &&
+        element.tagName !== "CANVAS",
+    );
 
-  // elementsFromPoint returns elements from most specific (smallest) to least
-  const elements = document.elementsFromPoint(cx, cy);
-
-  for (const el of elements) {
-    if (!(el instanceof HTMLElement)) continue;
-    // Skip agentation UI
-    if (el.hasAttribute("data-agentation-root")) continue;
-    if (el.closest?.("[data-agentation-root]")) continue;
-    if (el.tagName === "CANVAS") continue;
-    // Skip html/body — we want something more specific
-    if (el === document.documentElement || el === document.body) continue;
-
-    const rect = el.getBoundingClientRect();
-    // Accept elements that cover at least ~90% of the capture region
-    if (
-      rect.left <= captureX + captureW * 0.1 &&
-      rect.top <= captureY + captureH * 0.1 &&
-      rect.right >= captureX + captureW * 0.9 &&
-      rect.bottom >= captureY + captureH * 0.9
-    ) {
-      return el;
+  let candidate = hit ?? document.body;
+  while (candidate && candidate !== document.documentElement) {
+    if (coversCaptureRegion(candidate, capture) && hasPaintedBackground(candidate)) {
+      return candidate;
     }
+    candidate = candidate.parentElement ?? document.documentElement;
   }
+  return document.documentElement;
+}
 
-  return document.body;
+function getCanvasBackgroundColor(target: HTMLElement): string {
+  let element: HTMLElement | null = target;
+  while (element) {
+    const color = window.getComputedStyle(element).backgroundColor;
+    if (!isTransparentBackgroundColor(color)) return color;
+    element = element.parentElement;
+  }
+  return "#ffffff";
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: "image/png" | "image/jpeg",
+  quality?: number,
+): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 }
 
 // ---------------------------------------------------------------------------
 // DOM capture (modern-screenshot)
 // ---------------------------------------------------------------------------
 
-/**
- * Capture a viewport region as a JPEG data URL using DOM-to-image.
- * Composites drawing strokes on top.
- *
- * Returns null if modern-screenshot is not installed or capture fails.
- */
 export async function captureDomRegion(
   regionX: number,
   regionY: number,
@@ -100,86 +160,109 @@ export async function captureDomRegion(
   }>,
   padding = 32,
   quality = 0.85,
-): Promise<string | null> {
+): Promise<CapturedDomRegion | null> {
   const mod = await getDomCapture();
   if (!mod) return null;
 
-  // Region to capture in viewport coords
-  const captureX = Math.max(0, regionX - padding);
-  const captureY = Math.max(0, regionY - padding);
-  const captureW = regionW + padding * 2;
-  const captureH = regionH + padding * 2;
+  const capture = getCaptureRegion(
+    regionX,
+    regionY,
+    regionW,
+    regionH,
+    Math.max(0, padding),
+  );
+  if (!capture) return null;
 
-  // Output size (capped)
-  const maxDim = 600;
-  const outScale = Math.min(1, maxDim / Math.max(captureW, captureH));
-  const outW = Math.round(captureW * outScale);
-  const outH = Math.round(captureH * outScale);
-  if (outW < 1 || outH < 1) return null;
+  const maxDimension = 1200;
+  const outputScale = Math.min(
+    1,
+    maxDimension / Math.max(capture.width, capture.height),
+  );
+  const outputWidth = Math.max(1, Math.round(capture.width * outputScale));
+  const outputHeight = Math.max(1, Math.round(capture.height * outputScale));
 
-  // Hide agentation UI so it doesn't appear in the capture
-  const agentationRoot = document.querySelector("[data-agentation-root]") as HTMLElement | null;
-  const prevVisibility = agentationRoot?.style.visibility;
-  if (agentationRoot) agentationRoot.style.visibility = "hidden";
+  const agentationRoots = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-agentation-root]"),
+  );
+  const previousVisibility = agentationRoots.map((root) => root.style.visibility);
+  agentationRoots.forEach((root) => {
+    root.style.visibility = "hidden";
+  });
 
   try {
-    const target = findCaptureTarget(captureX, captureY, captureW, captureH);
+    const target = findCaptureTarget(capture);
     const targetRect = target.getBoundingClientRect();
+    const backgroundColor = getCanvasBackgroundColor(target);
 
-    // Render the target element at 1:1 CSS pixel scale
     const domCanvas = await mod.domToCanvas(target, {
-      backgroundColor: "#ffffff",
-      timeout: 5000,
+      backgroundColor,
+      timeout: 5_000,
+      features: {
+        copyScrollbar: true,
+        restoreScrollPosition: true,
+      },
     });
 
-    // domToCanvas renders the element's full scrollable content.
-    // We need to map our viewport capture region to the domCanvas coords.
-    //
-    // For non-scrollable elements: domCanvas size ≈ targetRect size
-    // For scrollable elements: domCanvas size ≈ scrollWidth × scrollHeight
-    //
-    // The offset within the canvas depends on whether the target has scrolled content.
-    // Use the ratio of canvas size to actual element dimensions.
-    const ratioX = domCanvas.width / (target.scrollWidth || targetRect.width);
-    const ratioY = domCanvas.height / (target.scrollHeight || targetRect.height);
+    const contentWidth = target.scrollWidth || targetRect.width;
+    const contentHeight = target.scrollHeight || targetRect.height;
+    const ratioX = domCanvas.width / Math.max(1, contentWidth);
+    const ratioY = domCanvas.height / Math.max(1, contentHeight);
+    const scrollLeft =
+      target === document.body || target === document.documentElement
+        ? window.scrollX
+        : target.scrollLeft;
+    const scrollTop =
+      target === document.body || target === document.documentElement
+        ? window.scrollY
+        : target.scrollTop;
 
-    // Convert viewport offset to element-content offset
-    // targetRect.top is viewport-relative; for scrolled elements we need to add scrollTop
-    const scrollLeft = target === document.body ? window.scrollX : target.scrollLeft;
-    const scrollTop = target === document.body ? window.scrollY : target.scrollTop;
+    const sourceX = (capture.x - targetRect.left + scrollLeft) * ratioX;
+    const sourceY = (capture.y - targetRect.top + scrollTop) * ratioY;
+    const sourceWidth = capture.width * ratioX;
+    const sourceHeight = capture.height * ratioY;
 
-    const elContentX = (captureX - targetRect.left + scrollLeft) * ratioX;
-    const elContentY = (captureY - targetRect.top + scrollTop) * ratioY;
-    const cropW = captureW * ratioX;
-    const cropH = captureH * ratioY;
-
-    // Create output canvas and crop
     const canvas = document.createElement("canvas");
-    canvas.width = outW;
-    canvas.height = outH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
 
-    // White background in case crop extends beyond domCanvas
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, outW, outH);
-
-    ctx.drawImage(
+    // NOTE: Match the real ancestor color instead of introducing white strips
+    // when a crop touches the viewport or the rendered target boundary.
+    context.fillStyle = backgroundColor;
+    context.fillRect(0, 0, outputWidth, outputHeight);
+    context.drawImage(
       domCanvas,
-      elContentX, elContentY, cropW, cropH,
-      0, 0, outW, outH,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      outputWidth,
+      outputHeight,
     );
 
-    // Composite drawing strokes on top
-    drawStrokesOnCanvas(ctx, strokes, captureX, captureY, outScale);
+    drawStrokesOnCanvas(
+      context,
+      strokes,
+      capture.x,
+      capture.y,
+      outputScale,
+      outputScale,
+    );
 
-    return canvas.toDataURL("image/jpeg", quality);
-  } catch (err) {
-    console.warn("[Agentation] DOM capture failed:", err);
+    const blob = await canvasToBlob(canvas, "image/jpeg", quality);
+    return blob
+      ? { blob, width: outputWidth, height: outputHeight }
+      : null;
+  } catch (error) {
+    console.warn("[Agentation] DOM capture failed:", error);
     return null;
   } finally {
-    // Always restore agentation UI
-    if (agentationRoot) agentationRoot.style.visibility = prevVisibility ?? "";
+    agentationRoots.forEach((root, index) => {
+      root.style.visibility = previousVisibility[index] ?? "";
+    });
   }
 }
 
@@ -187,10 +270,6 @@ export async function captureDomRegion(
 // Stroke-only fallback
 // ---------------------------------------------------------------------------
 
-/**
- * Capture drawing strokes as a PNG data URL (fallback when DOM capture
- * isn't available). Renders strokes on a light background.
- */
 export function captureDrawingStrokes(
   regionX: number,
   regionY: number,
@@ -204,42 +283,48 @@ export function captureDrawingStrokes(
   padding = 32,
 ): string | null {
   try {
-    const captureX = Math.max(0, regionX - padding);
-    const captureY = Math.max(0, regionY - padding);
-    const captureW = regionW + padding * 2;
-    const captureH = regionH + padding * 2;
+    const capture = getCaptureRegion(
+      regionX,
+      regionY,
+      regionW,
+      regionH,
+      Math.max(0, padding),
+    );
+    if (!capture) return null;
 
-    const maxDim = 400;
-    const scale = Math.min(1, maxDim / Math.max(captureW, captureH));
-    const outW = Math.round(captureW * scale);
-    const outH = Math.round(captureH * scale);
-
-    if (outW < 1 || outH < 1) return null;
+    const maxDimension = 400;
+    const scale = Math.min(
+      1,
+      maxDimension / Math.max(capture.width, capture.height),
+    );
+    const outputWidth = Math.max(1, Math.round(capture.width * scale));
+    const outputHeight = Math.max(1, Math.round(capture.height * scale));
 
     const canvas = document.createElement("canvas");
-    canvas.width = outW;
-    canvas.height = outH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
 
-    ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-    ctx.fillRect(0, 0, outW, outH);
-
-    drawStrokesOnCanvas(ctx, strokes, captureX, captureY, scale);
-
+    context.fillStyle = "rgba(255, 255, 255, 0.85)";
+    context.fillRect(0, 0, outputWidth, outputHeight);
+    drawStrokesOnCanvas(
+      context,
+      strokes,
+      capture.x,
+      capture.y,
+      scale,
+      scale,
+    );
     return canvas.toDataURL("image/png");
-  } catch (err) {
-    console.warn("[Agentation] Stroke capture failed:", err);
+  } catch (error) {
+    console.warn("[Agentation] Stroke capture failed:", error);
     return null;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Shared: draw strokes onto a canvas
-// ---------------------------------------------------------------------------
-
 function drawStrokesOnCanvas(
-  ctx: CanvasRenderingContext2D,
+  context: CanvasRenderingContext2D,
   strokes: Array<{
     points: Array<{ x: number; y: number }>;
     color: string;
@@ -247,30 +332,29 @@ function drawStrokesOnCanvas(
   }>,
   originX: number,
   originY: number,
-  scale: number,
-) {
+  scaleX: number,
+  scaleY: number,
+): void {
   const scrollY = window.scrollY;
   for (const stroke of strokes) {
     if (stroke.points.length < 2) continue;
 
-    ctx.save();
-    ctx.strokeStyle = stroke.color;
-    ctx.lineWidth = Math.max(2, 2.5 * scale);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    context.save();
+    context.strokeStyle = stroke.color;
+    context.lineWidth = Math.max(2, 2.5 * ((scaleX + scaleY) / 2));
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
 
-    ctx.beginPath();
-    for (let i = 0; i < stroke.points.length; i++) {
-      const p = stroke.points[i];
-      const vx = p.x;
-      const vy = stroke.fixed ? p.y : p.y - scrollY;
-      const cx = (vx - originX) * scale;
-      const cy = (vy - originY) * scale;
+    stroke.points.forEach((point, index) => {
+      const viewportY = stroke.fixed ? point.y : point.y - scrollY;
+      const canvasX = (point.x - originX) * scaleX;
+      const canvasY = (viewportY - originY) * scaleY;
+      if (index === 0) context.moveTo(canvasX, canvasY);
+      else context.lineTo(canvasX, canvasY);
+    });
 
-      if (i === 0) ctx.moveTo(cx, cy);
-      else ctx.lineTo(cx, cy);
-    }
-    ctx.stroke();
-    ctx.restore();
+    context.stroke();
+    context.restore();
   }
 }

@@ -87,8 +87,12 @@ import {
   originalSetInterval,
   originalRequestAnimationFrame,
 } from "../../utils/freeze-animations";
+import {
+  captureDomRegion,
+  type CapturedDomRegion,
+} from "../../utils/screenshot";
 
-import type { Annotation } from "../../types";
+import type { Annotation, AnnotationScreenshot } from "../../types";
 import styles from "./styles.module.scss";
 import { generateOutput } from "../../utils/generate-output";
 import { AnnotationMarker, ExitingMarker, PendingMarker } from "./annotation-marker";
@@ -176,6 +180,43 @@ const DEFAULT_SETTINGS: ToolbarSettings = {
 const TOOLBAR_SETTINGS_STORAGE_KEY = "feedback-toolbar-settings";
 /** One-shot migration: overwrite stored `webhooksEnabled` so installs that saved `true` do not auto-POST every annotation. */
 const WEBHOOK_SUBMIT_ONLY_MIGRATION_KEY = "agentation.webhookSubmitOnlyMigration.v1";
+const SCREENSHOT_UPLOAD_TIMEOUT_MS = 20_000;
+const DEFAULT_TRUSTED_SCREENSHOT_PARENT_ORIGINS = new Set([
+  "https://console.qwikbuild.com",
+  "https://consoleq.dev.qwikbuild.com",
+  "http://localhost:5174",
+]);
+
+const createScreenshotRequestId = () =>
+  `screenshot-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const normalizeTrustedParentOrigin = (value?: string): string | null => {
+  if (!value) return null;
+  try {
+    const origin = new URL(value);
+    return origin.protocol === "https:" || origin.protocol === "http:"
+      ? origin.origin
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveTrustedParentOrigin = (configuredOrigin?: string): string | null => {
+  const configured = normalizeTrustedParentOrigin(configuredOrigin);
+  if (configured) return configured;
+  if (typeof window === "undefined" || typeof document === "undefined") return null;
+
+  const ancestorOrigin = window.location.ancestorOrigins?.[0];
+  const candidates = [document.referrer, ancestorOrigin];
+  for (const candidate of candidates) {
+    const origin = normalizeTrustedParentOrigin(candidate);
+    if (origin && DEFAULT_TRUSTED_SCREENSHOT_PARENT_ORIGINS.has(origin)) {
+      return origin;
+    }
+  }
+  return null;
+};
 
 // Simple URL validation - checks for valid http(s) URL format
 const isValidUrl = (url: string): boolean => {
@@ -373,6 +414,8 @@ export type PageFeedbackToolbarCSSProps = {
   showToolbar?: boolean;
   /** Whether annotation popups include voice input. Defaults to true. */
   enableVoiceInput?: boolean;
+  /** Optional trusted parent-origin override. Qwikbuild console origins are detected automatically. */
+  screenshotUploadParentOrigin?: string;
   /** Custom class name applied to the toolbar container. Use to adjust positioning or z-index. */
   className?: string;
 };
@@ -408,8 +451,12 @@ export function PageFeedbackToolbarCSS({
   externalModeMessageType = "agentation.mode",
   showToolbar = false,
   enableVoiceInput = true,
+  screenshotUploadParentOrigin,
   className: userClassName,
 }: PageFeedbackToolbarCSSProps = {}) {
+  const trustedScreenshotParentOrigin = resolveTrustedParentOrigin(
+    screenshotUploadParentOrigin,
+  );
   const endpointAuth: SyncAuthOptions = {
     authToken: endpointAuthToken,
     authHeaderName: endpointAuthHeaderName,
@@ -2779,6 +2826,65 @@ export function PageFeedbackToolbarCSS({
     ],
   );
 
+  const uploadCapturedScreenshot = useCallback(
+    async (
+      annotationId: string,
+      capture: CapturedDomRegion,
+    ): Promise<AnnotationScreenshot | null> => {
+      const parentOrigin = trustedScreenshotParentOrigin;
+      if (window.parent === window || !parentOrigin) return null;
+
+      const requestId = createScreenshotRequestId();
+      const image = await capture.blob.arrayBuffer();
+      return new Promise((resolve) => {
+        const finish = (screenshot: AnnotationScreenshot | null) => {
+          window.clearTimeout(timeoutId);
+          window.removeEventListener("message", onMessage);
+          resolve(screenshot);
+        };
+        const onMessage = (event: MessageEvent) => {
+          if (event.source !== window.parent || event.origin !== parentOrigin) return;
+          const data = event.data as {
+            type?: string;
+            requestId?: string;
+            success?: boolean;
+            screenshot?: AnnotationScreenshot;
+          } | null;
+          if (
+            !data ||
+            data.type !== "agentation.screenshot.upload.result" ||
+            data.requestId !== requestId
+          ) {
+            return;
+          }
+          finish(data.success && data.screenshot ? data.screenshot : null);
+        };
+        const timeoutId = window.setTimeout(
+          () => finish(null),
+          SCREENSHOT_UPLOAD_TIMEOUT_MS,
+        );
+
+        window.addEventListener("message", onMessage);
+        // NOTE: Screenshot bytes cross the iframe boundary only to an explicit
+        // override or a known Qwikbuild console origin; Agentation retains metadata only.
+        window.parent.postMessage(
+          {
+            type: "agentation.screenshot.upload.request",
+            requestId,
+            annotationId,
+            image,
+            mimeType: capture.blob.type || "image/jpeg",
+            width: capture.width,
+            height: capture.height,
+          },
+          parentOrigin,
+          [image],
+        );
+      });
+    },
+    [trustedScreenshotParentOrigin],
+  );
+
   // Add annotation
   const addAnnotation = useCallback(
     (comment: string) => {
@@ -2817,6 +2923,19 @@ export function PageFeedbackToolbarCSS({
             }
           : {}),
       };
+      const boundingBox = pendingAnnotation.boundingBox;
+      const screenshotCapture =
+        boundingBox && trustedScreenshotParentOrigin
+          ? captureDomRegion(
+              boundingBox.x,
+              pendingAnnotation.isFixed
+                ? boundingBox.y
+                : boundingBox.y - window.scrollY,
+              boundingBox.width,
+              boundingBox.height,
+              [],
+            )
+          : Promise.resolve(null);
 
       setAnnotations((prev) => [...prev, newAnnotation]);
       // Prevent immediate hover on newly added marker
@@ -2842,32 +2961,59 @@ export function PageFeedbackToolbarCSS({
 
       window.getSelection()?.removeAllRanges();
 
-      // Sync to server (non-blocking, but update local ID with server's ID)
-      if (endpoint && currentSessionId) {
-        syncAnnotation(endpoint, currentSessionId, newAnnotation)
-          .then((serverAnnotation) => {
-            // Update local annotation with server-assigned ID
-            if (serverAnnotation.id !== newAnnotation.id) {
+      // NOTE: Text sync stays authoritative and non-blocking. Screenshot capture
+      // or upload failure leaves the annotation intact without an image.
+      void (async () => {
+        let persistedId = newAnnotation.id;
+        if (endpoint && currentSessionId) {
+          try {
+            const serverAnnotation = await syncAnnotation(
+              endpoint,
+              currentSessionId,
+              newAnnotation,
+            );
+            persistedId = serverAnnotation.id;
+            if (persistedId !== newAnnotation.id) {
               setAnnotations((prev) =>
-                prev.map((a) =>
-                  a.id === newAnnotation.id
-                    ? { ...a, id: serverAnnotation.id }
-                    : a,
+                prev.map((annotation) =>
+                  annotation.id === newAnnotation.id
+                    ? { ...annotation, id: persistedId }
+                    : annotation,
                 ),
               );
-              // Also update the animated markers set
               setAnimatedMarkers((prev) => {
                 const next = new Set(prev);
                 next.delete(newAnnotation.id);
-                next.add(serverAnnotation.id);
+                next.add(persistedId);
                 return next;
               });
             }
-          })
-          .catch((error) => {
+          } catch (error) {
             console.warn("[Agentation] Failed to sync annotation:", error);
-          });
-      }
+            return;
+          }
+        }
+
+        const capture = await screenshotCapture;
+        if (!capture) return;
+        const screenshot = await uploadCapturedScreenshot(persistedId, capture);
+        if (!screenshot) return;
+
+        setAnnotations((prev) =>
+          prev.map((annotation) =>
+            annotation.id === persistedId || annotation.id === newAnnotation.id
+              ? { ...annotation, id: persistedId, screenshot }
+              : annotation,
+          ),
+        );
+        if (endpoint) {
+          try {
+            await updateAnnotationOnServer(endpoint, persistedId, { screenshot });
+          } catch (error) {
+            console.warn("[Agentation] Failed to sync annotation screenshot:", error);
+          }
+        }
+      })();
     },
     [
       pendingAnnotation,
@@ -2875,6 +3021,9 @@ export function PageFeedbackToolbarCSS({
       fireWebhook,
       endpoint,
       currentSessionId,
+      trustedScreenshotParentOrigin,
+      updateAnnotationOnServer,
+      uploadCapturedScreenshot,
     ],
   );
 
@@ -3440,15 +3589,28 @@ export function PageFeedbackToolbarCSS({
 
   // Send to webhook
   const sendToWebhook = useCallback(async (
-    options: { includeAllPages?: boolean } = {},
+    options: {
+      includeAllPages?: boolean;
+      includedScreenshotAnnotationIds?: string[];
+    } = {},
   ): Promise<{ success: boolean; output?: string; reason?: string }> => {
     const includeAllPages = options.includeAllPages === true;
-    const { output, annotations: submittedAnnotations } = buildSubmitPayload(
+    const { output, annotations } = buildSubmitPayload(
       includeAllPages,
     );
     if (!output) {
       return { success: false, reason: "no_content" };
     }
+    const includedScreenshotIds = options.includedScreenshotAnnotationIds
+      ? new Set(options.includedScreenshotAnnotationIds)
+      : null;
+    // NOTE: Screenshot inclusion is a submit-time choice. Strip only the image
+    // reference from copies so comment text and cleanup IDs retain their semantics.
+    const submittedAnnotations = annotations.map((annotation) =>
+      annotation.screenshot && includedScreenshotIds && !includedScreenshotIds.has(annotation.id)
+        ? { ...annotation, screenshot: undefined }
+        : annotation,
+    );
 
     // Fire onSubmit callback
     if (onSubmit) {
@@ -3485,12 +3647,30 @@ export function PageFeedbackToolbarCSS({
 
   useEffect(() => {
     if (!externalSubmitMessageType) return;
-    // NOTE: Qwikbuild Apply Feedback confirms in parent UI, then posts into iframe to trigger the exact same submit formatter path as toolbar send.
+    const parentOrigin = trustedScreenshotParentOrigin;
+    if (!parentOrigin) return;
+    // NOTE: Qwikbuild Apply Feedback confirms in the trusted parent UI, then
+    // triggers the same formatter path as toolbar send without exposing images
+    // to arbitrary embedding pages.
     const onMessage = (event: MessageEvent) => {
-      const data = event?.data;
+      if (event.source !== window.parent || event.origin !== parentOrigin) return;
+      const data = event?.data as {
+        type?: string;
+        includedScreenshotAnnotationIds?: unknown;
+      } | null;
       if (!data || typeof data !== "object") return;
-      if ((data as { type?: string }).type !== externalSubmitMessageType) return;
-      void sendToWebhook({ includeAllPages: true }).then((result) => {
+      if (data.type !== externalSubmitMessageType) return;
+      const includedScreenshotAnnotationIds = Array.isArray(
+        data.includedScreenshotAnnotationIds,
+      )
+        ? data.includedScreenshotAnnotationIds.filter(
+            (id): id is string => typeof id === "string",
+          )
+        : undefined;
+      void sendToWebhook({
+        includeAllPages: true,
+        includedScreenshotAnnotationIds,
+      }).then((result) => {
         try {
           window.parent?.postMessage(
             {
@@ -3499,7 +3679,7 @@ export function PageFeedbackToolbarCSS({
               reason: result.reason,
               output: result.output,
             },
-            "*",
+            parentOrigin,
           );
         } catch {
           // noop
@@ -3508,7 +3688,7 @@ export function PageFeedbackToolbarCSS({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [externalSubmitMessageType, sendToWebhook]);
+  }, [externalSubmitMessageType, trustedScreenshotParentOrigin, sendToWebhook]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {

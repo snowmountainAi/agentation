@@ -29,6 +29,7 @@ export type Annotation = {
     width: number;
     height: number;
   }>; // Individual bounding boxes for multi-select hover highlighting
+  screenshot?: AnnotationScreenshot;
 
   // Annotation kind (defaults to "feedback" when undefined — backward compat)
   kind?: "feedback" | "placement" | "rearrange";
@@ -66,6 +67,16 @@ export type Annotation = {
 
   // Local-only sync tracking (not sent to server)
   _syncedTo?: string; // Session ID this annotation was synced to
+};
+
+export type AnnotationScreenshot = {
+  key: string;
+  name: string;
+  contentType: "image/jpeg" | "image/png";
+  size: number;
+  width: number;
+  height: number;
+  capturedAt: string;
 };
 
 // -----------------------------------------------------------------------------
@@ -106,4 +117,3 @@ export type ThreadMessage = {
   content: string;
   timestamp: number;
 };
-

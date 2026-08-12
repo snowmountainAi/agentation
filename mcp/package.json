@@ -1,6 +1,6 @@
 {
   "name": "agentation-mcp",
-  "version": "1.2.2-qwikbuild",
+  "version": "1.2.3-qwikbuild",
   "description": "MCP server for Agentation - visual feedback for AI coding agents",
   "license": "PolyForm-Shield-1.0.0",
   "main": "./dist/index.js",

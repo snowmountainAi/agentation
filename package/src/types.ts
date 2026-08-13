@@ -30,6 +30,7 @@ export type Annotation = {
     height: number;
   }>; // Individual bounding boxes for multi-select hover highlighting
   screenshot?: AnnotationScreenshot;
+  screenshotStatus?: AnnotationScreenshotStatus;
 
   // Annotation kind (defaults to "feedback" when undefined — backward compat)
   kind?: "feedback" | "placement" | "rearrange";
@@ -78,6 +79,8 @@ export type AnnotationScreenshot = {
   height: number;
   capturedAt: string;
 };
+
+export type AnnotationScreenshotStatus = "pending" | "ready" | "failed" | "cancelled";
 
 // -----------------------------------------------------------------------------
 // Annotation Enums

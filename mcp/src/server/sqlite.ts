@@ -95,6 +95,7 @@ function initDatabase(db: Database.Database): void {
       selected_text TEXT,
       bounding_box TEXT,
       screenshot TEXT,
+      screenshot_status TEXT,
       nearby_text TEXT,
       css_classes TEXT,
       nearby_elements TEXT,
@@ -209,6 +210,7 @@ function rowToAnnotation(row: Record<string, unknown>): Annotation {
     selectedText: row.selected_text as string | undefined,
     boundingBox: row.bounding_box ? JSON.parse(row.bounding_box as string) : undefined,
     screenshot: row.screenshot ? JSON.parse(row.screenshot as string) : undefined,
+    screenshotStatus: row.screenshot_status as Annotation["screenshotStatus"],
     nearbyText: row.nearby_text as string | undefined,
     cssClasses: row.css_classes as string | undefined,
     nearbyElements: row.nearby_elements as string | undefined,
@@ -247,6 +249,7 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
   try { db.exec("ALTER TABLE annotations ADD COLUMN kind TEXT DEFAULT 'feedback'"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN extra TEXT"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot_status TEXT"); } catch {}
 
   // Restore event sequence from last event
   const lastEvent = db.prepare("SELECT MAX(sequence) as seq FROM events").get() as { seq: number | null };
@@ -271,13 +274,13 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
     insertAnnotation: db.prepare(`
       INSERT INTO annotations (
         id, session_id, x, y, comment, element, element_path, timestamp,
-        selected_text, bounding_box, screenshot, nearby_text, css_classes, nearby_elements,
+        selected_text, bounding_box, screenshot, screenshot_status, nearby_text, css_classes, nearby_elements,
         computed_styles, full_path, accessibility, is_multi_select, is_fixed,
         react_components, url, intent, severity, status, thread, created_at,
         updated_at, resolved_at, resolved_by, author_id, kind, extra
       ) VALUES (
         @id, @sessionId, @x, @y, @comment, @element, @elementPath, @timestamp,
-        @selectedText, @boundingBox, @screenshot, @nearbyText, @cssClasses, @nearbyElements,
+        @selectedText, @boundingBox, @screenshot, @screenshotStatus, @nearbyText, @cssClasses, @nearbyElements,
         @computedStyles, @fullPath, @accessibility, @isMultiSelect, @isFixed,
         @reactComponents, @url, @intent, @severity, @status, @thread, @createdAt,
         @updatedAt, @resolvedAt, @resolvedBy, @authorId, @kind, @extra
@@ -300,7 +303,8 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         screenshot = CASE
           WHEN @clearScreenshot = 1 THEN NULL
           ELSE COALESCE(@screenshot, screenshot)
-        END
+        END,
+        screenshot_status = COALESCE(@screenshotStatus, screenshot_status)
       WHERE id = @id
     `),
 
@@ -430,6 +434,7 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         selectedText: annotation.selectedText ?? null,
         boundingBox: annotation.boundingBox ? JSON.stringify(annotation.boundingBox) : null,
         screenshot: annotation.screenshot ? JSON.stringify(annotation.screenshot) : null,
+        screenshotStatus: annotation.screenshotStatus ?? null,
         nearbyText: annotation.nearbyText ?? null,
         cssClasses: annotation.cssClasses ?? null,
         nearbyElements: annotation.nearbyElements ?? null,
@@ -482,6 +487,7 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         intent: data.intent ?? null,
         severity: data.severity ?? null,
         screenshot: data.screenshot ? JSON.stringify(data.screenshot) : null,
+        screenshotStatus: data.screenshotStatus ?? null,
         clearScreenshot: data.screenshot === null ? 1 : 0,
       });
 
@@ -624,6 +630,7 @@ export function createTenantStore(dbPath?: string): TenantStore {
   try { db.exec("ALTER TABLE annotations ADD COLUMN kind TEXT DEFAULT 'feedback'"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN extra TEXT"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot_status TEXT"); } catch {}
 
   // Restore event sequence from last event
   const lastEvent = db.prepare("SELECT MAX(sequence) as seq FROM events").get() as { seq: number | null };

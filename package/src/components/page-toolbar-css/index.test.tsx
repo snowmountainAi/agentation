@@ -111,7 +111,7 @@ describe("PageFeedbackToolbarCSS", () => {
   });
 
   describe("external submit", () => {
-    it("sends pending annotations from all stored pages in submit format", async () => {
+    it("sends all stored pages while honoring modal screenshot exclusions", async () => {
       Object.defineProperty(document, "referrer", {
         configurable: true,
         value: "http://localhost:5174/projects/demo",
@@ -176,6 +176,7 @@ describe("PageFeedbackToolbarCSS", () => {
         new MessageEvent("message", {
           data: {
             type: "agentation.submit",
+            excludedScreenshotAnnotationIds: ["current-page"],
           },
           origin: "http://localhost:5174",
           source: window,
@@ -195,8 +196,8 @@ describe("PageFeedbackToolbarCSS", () => {
       expect(payload.annotations).toHaveLength(2);
       expect(
         payload.annotations.find((annotation: { id: string }) => annotation.id === "current-page")
-          ?.screenshot?.name,
-      ).toBe("current.jpg");
+          ?.screenshot,
+      ).toBeUndefined();
       expect(
         payload.annotations.find((annotation: { id: string }) => annotation.id === "settings-page")
           ?.screenshot?.name,

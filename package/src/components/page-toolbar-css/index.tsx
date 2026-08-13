@@ -2912,6 +2912,7 @@ export function PageFeedbackToolbarCSS({
         reactComponents: pendingAnnotation.reactComponents,
         sourceFile: pendingAnnotation.sourceFile,
         elementBoundingBoxes: pendingAnnotation.elementBoundingBoxes,
+        ...(includeScreenshot ? { screenshotStatus: "pending" as const } : {}),
         // Protocol fields for server sync
         ...(endpoint && currentSessionId
           ? {
@@ -2995,21 +2996,51 @@ export function PageFeedbackToolbarCSS({
           }
         }
 
+        if (!includeScreenshot) return;
+
+        const markScreenshotFailed = async () => {
+          setAnnotations((prev) =>
+            prev.map((annotation) =>
+              annotation.id === persistedId || annotation.id === newAnnotation.id
+                ? { ...annotation, id: persistedId, screenshotStatus: "failed" as const }
+                : annotation,
+            ),
+          );
+          if (endpoint) {
+            try {
+              await updateAnnotationOnServer(endpoint, persistedId, {
+                screenshotStatus: "failed",
+              });
+            } catch (error) {
+              console.warn("[Agentation] Failed to sync screenshot failure:", error);
+            }
+          }
+        };
+
         const capture = await screenshotCapture;
-        if (!capture) return;
+        if (!capture) {
+          await markScreenshotFailed();
+          return;
+        }
         const screenshot = await uploadCapturedScreenshot(persistedId, capture);
-        if (!screenshot) return;
+        if (!screenshot) {
+          await markScreenshotFailed();
+          return;
+        }
 
         setAnnotations((prev) =>
           prev.map((annotation) =>
             annotation.id === persistedId || annotation.id === newAnnotation.id
-              ? { ...annotation, id: persistedId, screenshot }
+              ? { ...annotation, id: persistedId, screenshot, screenshotStatus: "ready" }
               : annotation,
           ),
         );
         if (endpoint) {
           try {
-            await updateAnnotationOnServer(endpoint, persistedId, { screenshot });
+            await updateAnnotationOnServer(endpoint, persistedId, {
+              screenshot,
+              screenshotStatus: "ready",
+            });
           } catch (error) {
             console.warn("[Agentation] Failed to sync annotation screenshot:", error);
           }
@@ -3160,9 +3191,11 @@ export function PageFeedbackToolbarCSS({
       if (!editingAnnotation) return;
 
       const hadScreenshot = Boolean(editingAnnotation.screenshot);
+      const screenshotAlreadyPending = editingAnnotation.screenshotStatus === "pending";
+      const shouldCaptureScreenshot = includeScreenshot && !hadScreenshot && !screenshotAlreadyPending;
       const boundingBox = editingAnnotation.boundingBox;
       const screenshotCapture =
-        includeScreenshot && !hadScreenshot && boundingBox && trustedScreenshotParentOrigin
+        shouldCaptureScreenshot && boundingBox && trustedScreenshotParentOrigin
           ? captureDomRegion(
               boundingBox.x,
               editingAnnotation.isFixed
@@ -3174,8 +3207,19 @@ export function PageFeedbackToolbarCSS({
             )
           : Promise.resolve(null);
       const updatedAnnotation: Annotation = includeScreenshot
-        ? { ...editingAnnotation, comment: newComment }
-        : { ...editingAnnotation, comment: newComment, screenshot: undefined };
+        ? {
+            ...editingAnnotation,
+            comment: newComment,
+            ...(!hadScreenshot && !screenshotAlreadyPending
+              ? { screenshotStatus: "pending" as const }
+              : {}),
+          }
+        : {
+            ...editingAnnotation,
+            comment: newComment,
+            screenshot: undefined,
+            screenshotStatus: "cancelled",
+          };
 
       setAnnotations((prev) =>
         prev.map((a) =>
@@ -3193,7 +3237,11 @@ export function PageFeedbackToolbarCSS({
         // which preserves it during ordinary partial annotation updates.
         updateAnnotationOnServer(endpoint, editingAnnotation.id, {
           comment: newComment,
-          ...(!includeScreenshot ? { screenshot: null } : {}),
+          ...(!includeScreenshot
+            ? { screenshot: null, screenshotStatus: "cancelled" as const }
+            : shouldCaptureScreenshot
+              ? { screenshotStatus: "pending" as const }
+              : {}),
         }).catch((error) => {
           console.warn(
             "[Agentation] Failed to update annotation on server:",
@@ -3204,23 +3252,58 @@ export function PageFeedbackToolbarCSS({
 
       // NOTE: Existing screenshots remain immutable; capture only when editing turns the toggle on
       // for an annotation that did not already have one.
-      if (includeScreenshot && !hadScreenshot) {
+      if (shouldCaptureScreenshot) {
         void (async () => {
           const capture = await screenshotCapture;
-          if (!capture) return;
+          if (!capture) {
+            setAnnotations((prev) =>
+              prev.map((annotation) =>
+                annotation.id === editingAnnotation.id
+                  ? { ...annotation, screenshotStatus: "failed" }
+                  : annotation,
+              ),
+            );
+            if (endpoint) {
+              await updateAnnotationOnServer(endpoint, editingAnnotation.id, {
+                screenshotStatus: "failed",
+              }).catch((error) => {
+                console.warn("[Agentation] Failed to sync edited screenshot failure:", error);
+              });
+            }
+            return;
+          }
           const screenshot = await uploadCapturedScreenshot(editingAnnotation.id, capture);
-          if (!screenshot) return;
+          if (!screenshot) {
+            setAnnotations((prev) =>
+              prev.map((annotation) =>
+                annotation.id === editingAnnotation.id
+                  ? { ...annotation, screenshotStatus: "failed" }
+                  : annotation,
+              ),
+            );
+            if (endpoint) {
+              await updateAnnotationOnServer(endpoint, editingAnnotation.id, {
+                screenshotStatus: "failed",
+              }).catch((error) => {
+                console.warn("[Agentation] Failed to sync edited screenshot failure:", error);
+              });
+            }
+            return;
+          }
 
           setAnnotations((prev) =>
             prev.map((annotation) =>
               annotation.id === editingAnnotation.id
-                ? { ...annotation, screenshot }
+                ? { ...annotation, screenshot, screenshotStatus: "ready" }
                 : annotation,
             ),
           );
           if (endpoint) {
             try {
-              await updateAnnotationOnServer(endpoint, editingAnnotation.id, { screenshot });
+              await updateAnnotationOnServer(endpoint, editingAnnotation.id, {
+                screenshot,
+                screenshotStatus: "ready",
+              });
             } catch (error) {
               console.warn("[Agentation] Failed to sync edited annotation screenshot:", error);
             }
@@ -3643,7 +3726,10 @@ export function PageFeedbackToolbarCSS({
 
   // Send to webhook
   const sendToWebhook = useCallback(async (
-    options: { includeAllPages?: boolean } = {},
+    options: {
+      includeAllPages?: boolean;
+      excludedScreenshotAnnotationIds?: string[];
+    } = {},
   ): Promise<{ success: boolean; output?: string; reason?: string }> => {
     const includeAllPages = options.includeAllPages === true;
     const { output, annotations } = buildSubmitPayload(
@@ -3652,9 +3738,16 @@ export function PageFeedbackToolbarCSS({
     if (!output) {
       return { success: false, reason: "no_content" };
     }
-    // NOTE: Screenshot consent is captured when the annotation is created. If metadata exists here,
-    // the user opted in at capture time, so later submission paths must preserve it consistently.
-    const submittedAnnotations = annotations;
+    const excludedScreenshotIds = new Set(options.excludedScreenshotAnnotationIds || []);
+    // NOTE: Modal exclusion is applied only to the outgoing payload. Capture may finish in the background,
+    // but it cannot reintroduce an image the user explicitly removed before submission.
+    const submittedAnnotations = excludedScreenshotIds.size > 0
+      ? annotations.map((annotation) =>
+          excludedScreenshotIds.has(annotation.id)
+            ? { ...annotation, screenshot: undefined, screenshotStatus: "cancelled" as const }
+            : annotation,
+        )
+      : annotations;
 
     // Fire onSubmit callback
     if (onSubmit) {
@@ -3700,11 +3793,17 @@ export function PageFeedbackToolbarCSS({
       if (event.source !== window.parent || event.origin !== parentOrigin) return;
       const data = event?.data as {
         type?: string;
+        excludedScreenshotAnnotationIds?: unknown;
       } | null;
       if (!data || typeof data !== "object") return;
       if (data.type !== externalSubmitMessageType) return;
       void sendToWebhook({
         includeAllPages: true,
+        excludedScreenshotAnnotationIds: Array.isArray(data.excludedScreenshotAnnotationIds)
+          ? data.excludedScreenshotAnnotationIds.filter(
+              (id): id is string => typeof id === "string",
+            )
+          : [],
       }).then((result) => {
         try {
           window.parent?.postMessage(
@@ -5315,7 +5414,10 @@ export function PageFeedbackToolbarCSS({
                 }
                 enableVoiceInput={enableVoiceInput}
                 enableScreenshotInput={Boolean(trustedScreenshotParentOrigin)}
-                initialIncludeScreenshot={Boolean(editingAnnotation.screenshot)}
+                initialIncludeScreenshot={
+                  Boolean(editingAnnotation.screenshot) ||
+                  editingAnnotation.screenshotStatus === "pending"
+                }
                 style={(() => {
                   const markerY = editingAnnotation.isFixed
                     ? editingAnnotation.y

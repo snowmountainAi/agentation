@@ -22,6 +22,7 @@ export type Annotation = {
   isFixed?: boolean; // true if element has fixed/sticky positioning (marker stays fixed)
   reactComponents?: string; // React component hierarchy (e.g. "<App> <Dashboard> <Button>")
   screenshot?: AnnotationScreenshot;
+  screenshotStatus?: AnnotationScreenshotStatus;
 
   // Annotation kind (defaults to "feedback" when undefined — backward compat)
   kind?: "feedback" | "placement" | "rearrange";
@@ -67,6 +68,8 @@ export type AnnotationScreenshot = {
   height: number;
   capturedAt: string;
 };
+
+export type AnnotationScreenshotStatus = "pending" | "ready" | "failed" | "cancelled";
 
 export type AnnotationUpdate = Partial<
   Omit<Annotation, "id" | "sessionId" | "createdAt" | "screenshot">

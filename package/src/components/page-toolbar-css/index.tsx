@@ -3825,6 +3825,34 @@ export function PageFeedbackToolbarCSS({
   }, [externalSubmitMessageType, trustedScreenshotParentOrigin, sendToWebhook]);
 
   useEffect(() => {
+    const parentOrigin = trustedScreenshotParentOrigin;
+    if (!parentOrigin || window.parent === window) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.metaKey || event.altKey || event.repeat) return;
+
+      const shortcut = event.code === "KeyF"
+        ? "toggle-fullscreen"
+        : event.code === "Period"
+          ? "toggle-mode"
+          : null;
+      if (!shortcut) return;
+
+      // NOTE: Cross-origin iframe key events never reach AgentQ. Relay only the two explicit preview actions
+      // to the trusted embedding origin so the parent remains authoritative for visible layout and mode state.
+      event.preventDefault();
+      event.stopPropagation();
+      window.parent.postMessage(
+        { type: "agentation.shortcut", shortcut },
+        parentOrigin,
+      );
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [trustedScreenshotParentOrigin]);
+
+  useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const data = event?.data as { type?: string; requestId?: string } | undefined;
       if (!data || typeof data !== "object") return;

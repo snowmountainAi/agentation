@@ -320,6 +320,51 @@ describe("PageFeedbackToolbarCSS", () => {
         "*",
       );
     });
+
+    it("relays the Control-Shift preview shortcuts from the focused iframe", () => {
+      const parentPostMessage = vi.fn();
+      const parentWindow = { postMessage: parentPostMessage } as unknown as Window;
+      Object.defineProperty(window, "parent", {
+        configurable: true,
+        value: parentWindow,
+      });
+
+      render(
+        <PageFeedbackToolbarCSS
+          screenshotUploadParentOrigin="http://localhost:5174"
+        />,
+      );
+
+      const fullscreenEvent = new KeyboardEvent("keydown", {
+        key: "F",
+        code: "KeyF",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(fullscreenEvent);
+      expect(fullscreenEvent.defaultPrevented).toBe(true);
+      expect(parentPostMessage).toHaveBeenCalledWith(
+        { type: "agentation.shortcut", shortcut: "toggle-fullscreen" },
+        "http://localhost:5174",
+      );
+
+      const modeEvent = new KeyboardEvent("keydown", {
+        key: ">",
+        code: "Period",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(modeEvent);
+      expect(modeEvent.defaultPrevented).toBe(true);
+      expect(parentPostMessage).toHaveBeenCalledWith(
+        { type: "agentation.shortcut", shortcut: "toggle-mode" },
+        "http://localhost:5174",
+      );
+    });
   });
 });
 

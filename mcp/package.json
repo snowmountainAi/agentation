@@ -1,6 +1,6 @@
 {
   "name": "agentation-mcp",
-  "version": "1.2.5-qwikbuild",
+  "version": "1.2.6-qwikbuild",
   "description": "MCP server for Agentation - visual feedback for AI coding agents",
   "license": "PolyForm-Shield-1.0.0",
   "main": "./dist/index.js",
@@ -29,6 +29,7 @@
     "build": "tsup",
     "watch": "tsup --watch",
     "dev": "pnpm build && pnpm watch",
+    "test": "vitest run",
     "start": "pnpm build && node dist/cli.js server",
     "prepublishOnly": "pnpm build"
   },
@@ -40,8 +41,10 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
+    "agentation": "workspace:*",
     "tsup": "^8.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

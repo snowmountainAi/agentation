@@ -25,6 +25,7 @@ import {
   getEventsSince,
 } from "./store.js";
 import { eventBus } from "./events.js";
+import { formatExactPendingAnnotations, validatePendingFormatRequest } from "./format-output.js";
 import type { Annotation, AnnotationUpdate, AFSEvent, ActionRequest } from "../types.js";
 
 /**
@@ -443,6 +444,20 @@ const getAllPendingHandler: RouteHandler = async (_req, res) => {
 };
 
 /**
+ * POST /pending/format - Format exactly the current pending set with Agentation's contract.
+ */
+const formatPendingHandler: RouteHandler = async (req, res) => {
+  try {
+    const request = validatePendingFormatRequest(await parseBody<unknown>(req));
+    const pending = listSessions().flatMap((session) => getPendingAnnotations(session.id));
+    sendJson(res, 200, formatExactPendingAnnotations(pending, request));
+  } catch (err) {
+    const message = (err as Error).message;
+    sendError(res, message === "Pending annotations changed" ? 409 : 400, message);
+  }
+};
+
+/**
  * POST /sessions/:id/action - Request agent action on annotations.
  *
  * Emits an action.requested event via SSE with the current annotations
@@ -825,6 +840,12 @@ const routes: Route[] = [
     method: "GET",
     pattern: /^\/pending$/,
     handler: getAllPendingHandler,
+    paramNames: [],
+  },
+  {
+    method: "POST",
+    pattern: /^\/pending\/format$/,
+    handler: formatPendingHandler,
     paramNames: [],
   },
   {

@@ -304,6 +304,8 @@ type Annotation = {
   timestamp?: number;
   nearbyText?: string;
   reactComponents?: string;
+  sourceFile?: string;
+  captureViewport?: { width: number; height: number };
   status: string;
   kind?: "feedback" | "placement" | "rearrange";
   placement?: {
@@ -345,6 +347,8 @@ function mapAnnotationForMcp(a: Annotation) {
     timestamp: a.timestamp,
     nearbyText: a.nearbyText,
     reactComponents: a.reactComponents,
+    sourceFile: a.sourceFile,
+    captureViewport: a.captureViewport,
     ...(a.kind === "placement" && a.placement ? { placement: a.placement } : {}),
     ...(a.kind === "rearrange" && a.rearrange ? { rearrange: a.rearrange } : {}),
   };

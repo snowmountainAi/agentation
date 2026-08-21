@@ -85,7 +85,7 @@ export default {};
 export default defineConfig((options) => [
   // React component
   {
-    entry: ["src/index.ts"],
+    entry: ["src/index.ts", "src/formatter.ts"],
     format: ["cjs", "esm"],
     dts: true,
     splitting: false,

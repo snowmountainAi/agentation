@@ -21,6 +21,8 @@ export type Annotation = {
   isMultiSelect?: boolean; // true if created via drag selection
   isFixed?: boolean; // true if element has fixed/sticky positioning (marker stays fixed)
   reactComponents?: string; // React component hierarchy (e.g. "<App> <Dashboard> <Button>")
+  sourceFile?: string; // Source location used by Agentation's standard formatter
+  captureViewport?: { width: number; height: number }; // Viewport when coordinates were captured
   screenshot?: AnnotationScreenshot;
   screenshotStatus?: AnnotationScreenshotStatus;
 
@@ -57,6 +59,7 @@ export type Annotation = {
   resolvedAt?: string;
   resolvedBy?: "human" | "agent";
   authorId?: string;
+  clientAnnotationId?: string; // Browser-local transport correlation; never an authorization identity
 };
 
 export type AnnotationScreenshot = {

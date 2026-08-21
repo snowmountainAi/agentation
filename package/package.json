@@ -1,6 +1,6 @@
 {
   "name": "agentation",
-  "version": "3.0.23-qwikbuild",
+  "version": "3.0.24-qwikbuild",
   "description": "Visual feedback for AI coding agents",
   "sideEffects": false,
   "license": "PolyForm-Shield-1.0.0",
@@ -17,6 +17,17 @@
       "require": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      }
+    },
+    "./formatter": {
+      "types": "./dist/formatter.d.ts",
+      "import": {
+        "types": "./dist/formatter.d.mts",
+        "default": "./dist/formatter.mjs"
+      },
+      "require": {
+        "types": "./dist/formatter.d.ts",
+        "default": "./dist/formatter.js"
       }
     }
   },

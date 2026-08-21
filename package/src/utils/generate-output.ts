@@ -1,8 +1,31 @@
-import {
+import type {
   OutputDetailLevel,
   ReactComponentMode,
 } from "../components/page-toolbar-css";
-import { Annotation } from "../types";
+import type { Annotation } from "../types";
+
+export const STANDARD_OUTPUT_CONTRACT_VERSION = 1;
+
+// NOTE: Environment is explicit so trusted server integrations can reproduce the browser
+// formatter byte-for-byte without accepting iframe-authored markdown as an action payload.
+export type OutputEnvironment = {
+  viewport?: { width: number; height: number };
+  url?: string;
+  userAgent?: string;
+  timestamp?: string;
+  devicePixelRatio?: number;
+};
+
+function browserOutputEnvironment(): OutputEnvironment {
+  if (typeof window === "undefined") return {};
+  return {
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    url: window.location.href,
+    userAgent: navigator.userAgent,
+    timestamp: new Date().toISOString(),
+    devicePixelRatio: window.devicePixelRatio,
+  };
+}
 
 export const OUTPUT_TO_REACT_MODE: Record<
   OutputDetailLevel,
@@ -28,24 +51,24 @@ export function generateOutput(
   annotations: Annotation[],
   pathname: string,
   detailLevel: OutputDetailLevel = "standard",
+  environment: OutputEnvironment = browserOutputEnvironment(),
 ): string {
   if (annotations.length === 0) return "";
 
-  const viewport =
-    typeof window !== "undefined"
-      ? `${window.innerWidth}×${window.innerHeight}`
-      : "unknown";
+  const viewport = environment.viewport
+    ? `${environment.viewport.width}×${environment.viewport.height}`
+    : "unknown";
 
   let output = `## Page Feedback: ${pathname}\n`;
 
   if (detailLevel === "forensic") {
     output += `\n**Environment:**\n`;
     output += `- Viewport: ${viewport}\n`;
-    if (typeof window !== "undefined") {
-      output += `- URL: ${window.location.href}\n`;
-      output += `- User Agent: ${navigator.userAgent}\n`;
-      output += `- Timestamp: ${new Date().toISOString()}\n`;
-      output += `- Device Pixel Ratio: ${window.devicePixelRatio}\n`;
+    if (environment.url) output += `- URL: ${environment.url}\n`;
+    if (environment.userAgent) output += `- User Agent: ${environment.userAgent}\n`;
+    if (environment.timestamp) output += `- Timestamp: ${environment.timestamp}\n`;
+    if (environment.devicePixelRatio !== undefined) {
+      output += `- Device Pixel Ratio: ${environment.devicePixelRatio}\n`;
     }
     output += `\n---\n`;
   } else if (detailLevel !== "compact") {

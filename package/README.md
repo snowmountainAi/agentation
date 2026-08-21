@@ -115,10 +115,19 @@ type Annotation = {
   accessibility?: string;
   isMultiSelect?: boolean;
   isFixed?: boolean;
+  sourceFile?: string;
+  captureViewport?: { width: number; height: number };
 };
 ```
 
 > **Note:** This is a simplified type. The full type includes additional fields for Agent Sync (`url`, `status`, `thread`, `reactComponents`, etc.). See [agentation.com/schema](https://agentation.com/schema) for the complete schema.
+
+### Server-side formatting
+
+`agentation/formatter` exports the pure `generateOutput`, its structured types, and
+`STANDARD_OUTPUT_CONTRACT_VERSION`. Pass an explicit `OutputEnvironment` when formatting outside a
+browser. This subpath exists so trusted integrations can preserve Agentation's markdown contract
+without accepting preformatted output from an embedded page.
 
 ## How it works
 

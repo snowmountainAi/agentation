@@ -45,6 +45,11 @@ export {
   saveAnnotations,
   getStorageKey,
 } from "./utils/storage";
+export {
+  generateOutput,
+  STANDARD_OUTPUT_CONTRACT_VERSION,
+} from "./utils/generate-output";
+export type { OutputEnvironment } from "./utils/generate-output";
 
 // Types
 export type { Annotation } from "./types";

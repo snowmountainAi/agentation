@@ -105,6 +105,8 @@ function initDatabase(db: Database.Database): void {
       is_multi_select INTEGER DEFAULT 0,
       is_fixed INTEGER DEFAULT 0,
       react_components TEXT,
+      source_file TEXT,
+      capture_viewport TEXT,
       url TEXT,
       intent TEXT,
       severity TEXT,
@@ -115,6 +117,7 @@ function initDatabase(db: Database.Database): void {
       resolved_at TEXT,
       resolved_by TEXT,
       author_id TEXT,
+      client_annotation_id TEXT,
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
 
@@ -220,6 +223,8 @@ function rowToAnnotation(row: Record<string, unknown>): Annotation {
     isMultiSelect: Boolean(row.is_multi_select),
     isFixed: Boolean(row.is_fixed),
     reactComponents: row.react_components as string | undefined,
+    sourceFile: row.source_file as string | undefined,
+    captureViewport: row.capture_viewport ? JSON.parse(row.capture_viewport as string) : undefined,
     kind,
     ...(kind === "placement" && extra?.placement ? { placement: extra.placement } : {}),
     ...(kind === "rearrange" && extra?.rearrange ? { rearrange: extra.rearrange } : {}),
@@ -233,6 +238,7 @@ function rowToAnnotation(row: Record<string, unknown>): Annotation {
     resolvedAt: row.resolved_at as string | undefined,
     resolvedBy: row.resolved_by as Annotation["resolvedBy"],
     authorId: row.author_id as string | undefined,
+    clientAnnotationId: row.client_annotation_id as string | undefined,
   };
 }
 
@@ -250,6 +256,11 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
   try { db.exec("ALTER TABLE annotations ADD COLUMN extra TEXT"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot TEXT"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot_status TEXT"); } catch {}
+  // NOTE: These fields are part of the formatter contract, not optional UI decoration. If
+  // they are dropped here, an authoritative /pending read cannot reproduce browser output.
+  try { db.exec("ALTER TABLE annotations ADD COLUMN source_file TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN capture_viewport TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN client_annotation_id TEXT"); } catch {}
 
   // Restore event sequence from last event
   const lastEvent = db.prepare("SELECT MAX(sequence) as seq FROM events").get() as { seq: number | null };
@@ -276,14 +287,14 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         id, session_id, x, y, comment, element, element_path, timestamp,
         selected_text, bounding_box, screenshot, screenshot_status, nearby_text, css_classes, nearby_elements,
         computed_styles, full_path, accessibility, is_multi_select, is_fixed,
-        react_components, url, intent, severity, status, thread, created_at,
-        updated_at, resolved_at, resolved_by, author_id, kind, extra
+        react_components, source_file, capture_viewport, url, intent, severity, status, thread, created_at,
+        updated_at, resolved_at, resolved_by, author_id, client_annotation_id, kind, extra
       ) VALUES (
         @id, @sessionId, @x, @y, @comment, @element, @elementPath, @timestamp,
         @selectedText, @boundingBox, @screenshot, @screenshotStatus, @nearbyText, @cssClasses, @nearbyElements,
         @computedStyles, @fullPath, @accessibility, @isMultiSelect, @isFixed,
-        @reactComponents, @url, @intent, @severity, @status, @thread, @createdAt,
-        @updatedAt, @resolvedAt, @resolvedBy, @authorId, @kind, @extra
+        @reactComponents, @sourceFile, @captureViewport, @url, @intent, @severity, @status, @thread, @createdAt,
+        @updatedAt, @resolvedAt, @resolvedBy, @authorId, @clientAnnotationId, @kind, @extra
       )
     `),
     getAnnotation: db.prepare("SELECT * FROM annotations WHERE id = ?"),
@@ -444,6 +455,8 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         isMultiSelect: annotation.isMultiSelect ? 1 : 0,
         isFixed: annotation.isFixed ? 1 : 0,
         reactComponents: annotation.reactComponents ?? null,
+        sourceFile: annotation.sourceFile ?? null,
+        captureViewport: annotation.captureViewport ? JSON.stringify(annotation.captureViewport) : null,
         url: annotation.url ?? null,
         intent: annotation.intent ?? null,
         severity: annotation.severity ?? null,
@@ -454,6 +467,7 @@ export function createSQLiteStore(dbPath?: string): AFSStore {
         resolvedAt: null,
         resolvedBy: null,
         authorId: annotation.authorId ?? null,
+        clientAnnotationId: annotation.clientAnnotationId ?? null,
         kind: annotation.kind ?? "feedback",
         extra: extraJson,
       });
@@ -631,6 +645,9 @@ export function createTenantStore(dbPath?: string): TenantStore {
   try { db.exec("ALTER TABLE annotations ADD COLUMN extra TEXT"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot TEXT"); } catch {}
   try { db.exec("ALTER TABLE annotations ADD COLUMN screenshot_status TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN source_file TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN capture_viewport TEXT"); } catch {}
+  try { db.exec("ALTER TABLE annotations ADD COLUMN client_annotation_id TEXT"); } catch {}
 
   // Restore event sequence from last event
   const lastEvent = db.prepare("SELECT MAX(sequence) as seq FROM events").get() as { seq: number | null };

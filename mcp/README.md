@@ -96,6 +96,10 @@ The HTTP server provides a REST API for the browser toolbar:
 - `DELETE /annotations/:id` - Delete annotation
 - `GET /sessions/:id/pending` - Get pending annotations
 - `GET /pending` - Get all pending annotations
+- `POST /pending/format` - Format an exact pending ID set with Agentation's standard output contract
+
+`POST /pending/format` accepts only `{ annotationIds, viewport }`, rejects partial/stale sets, and
+formats the server-loaded records. It does not accept prompt text or request an agent action.
 
 ### Events (SSE)
 - `GET /sessions/:id/events` - Session event stream

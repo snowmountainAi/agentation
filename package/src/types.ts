@@ -22,6 +22,7 @@ export type Annotation = {
   isFixed?: boolean; // true if element has fixed/sticky positioning (marker stays fixed)
   reactComponents?: string; // React component hierarchy (e.g. "<App> <Dashboard> <Button>")
   sourceFile?: string; // Source file path from React _debugSource (dev mode only, e.g. "src/Button.tsx:42")
+  captureViewport?: { width: number; height: number }; // Viewport when coordinates were captured
   drawingIndex?: number; // Index of linked draw stroke (if any)
   elementBoundingBoxes?: Array<{
     x: number;
@@ -65,6 +66,7 @@ export type Annotation = {
   resolvedAt?: string;
   resolvedBy?: "human" | "agent";
   authorId?: string;
+  clientAnnotationId?: string; // Browser-local ID used only to correlate server rows with local markers
 
   // Local-only sync tracking (not sent to server)
   _syncedTo?: string; // Session ID this annotation was synced to
